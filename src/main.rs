@@ -1,23 +1,25 @@
 use crossterm::event::{read, Event, KeyCode};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
+use crossterm::execute;
 use std::io::{stdout, Write};
 
 fn main() -> anyhow::Result<()> {
-    // 1. Put the terminal into "raw mode"
     enable_raw_mode()?;
 
-    println!("Terminal is now in raw mode. Press any key to exit.\r");
-    
-    // We need to flush stdout because in raw mode, newlines don't automatically flush
-    stdout().flush()?;
+    let mut stdout = stdout();
+    // 1. Tell the terminal to switch to a temporary "alternate" screen
+    execute!(stdout, EnterAlternateScreen)?;
 
-    // 2. Wait for a single event (like a key press)
+    println!("We are now in the Alternate Screen!\r");
+    println!("Press 'q' to exit and see what happens.\r");
+    stdout.flush()?;
+
     loop {
         let event = read()?; // Blocks until an event occurs
 
         if let Event::Key(key_event) = event {
-            // Print the key we just pressed. 
-            // Note the \r\n: in raw mode, \n just moves down, it doesn't return to the left margin!
             println!("You pressed: {:?}\r", key_event.code);
 
             // Exit if they press Escape or 'q'
@@ -27,9 +29,9 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    // 3. Always restore the terminal before exiting!
-    disable_raw_mode()?;
+    // 2. Switch back to the main terminal screen before exiting
+    execute!(stdout, LeaveAlternateScreen)?;
     
-    println!("Safely returned to normal mode.");
+    disable_raw_mode()?;
     Ok(())
 }
