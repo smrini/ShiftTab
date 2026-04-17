@@ -10,33 +10,64 @@ fn main() -> anyhow::Result<()> {
     enable_raw_mode()?;
 
     let mut stdout = stdout();
-    // 1. Enter alternate screen and hide the blinking cursor
     execute!(stdout, EnterAlternateScreen, Hide)?;
+
+    // --- NEW: Application State ---
+    // A string to hold whatever the user types
+    let mut search_query = String::new();
+    // A hardcoded mock list of command flags/options
+    let completions = vec![
+        "--all",
+        "--force",
+        "--help",
+        "--quiet",
+        "--verbose",
+    ];
 
     // MAIN GAME/TUI LOOP
     loop {
-        // 2. The Render Phase: Wipe the screen and move the invisible cursor to the top-left
+        // 1. The Render Phase
         execute!(stdout, Clear(ClearType::All), MoveTo(0, 0))?;
         
-        println!("=== ShiftTab Pre-Alpha ===\r");
-        println!("UI rendered successfully!\r");
-        println!("Press 'q' to exit.\r");
+        // Draw the Search Box
+        println!("> {}\r", search_query);
+        println!("--------------------\r");
+
+        // Draw the list of completions
+        // NEW: We filter the list to only include items that contain the user's search query
+        for item in completions.iter().filter(|c| c.contains(&search_query)) {
+            println!("  {}\r", item);
+        }
+        
         stdout.flush()?;
 
-        // 3. The Input Phase: Wait for the user to press a key
+        // 2. The Input Phase
         let event = read()?; 
 
+        // 3. The Update Phase
         if let Event::Key(key_event) = event {
-            // Exit if they press Escape or 'q'
-            if key_event.code == KeyCode::Esc || key_event.code == KeyCode::Char('q') {
-                break;
+            match key_event.code {
+                // Exit gracefully
+                KeyCode::Esc => break,
+                
+                // If the user types a normal character, append it to our query
+                KeyCode::Char(c) => {
+                    search_query.push(c);
+                }
+                
+                // If the user hits backspace, remove the last character
+                KeyCode::Backspace => {
+                    search_query.pop();
+                }
+                
+                // Ignore all other keys for now
+                _ => {}
             }
         }
     }
 
-    // 4. Show the cursor again before returning to the normal terminal
+    // Teardown
     execute!(stdout, Show, LeaveAlternateScreen)?;
-    
     disable_raw_mode()?;
     Ok(())
 }
