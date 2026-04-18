@@ -37,34 +37,32 @@ fn main() -> anyhow::Result<()> {
     // Store out final choice so we can use it after the UI closes
     let mut final_selection: Option<String> = None;
 
-    // 4. Provide dynamic completions based on what they are trying to run!
-    let completions = match base_command {
-        "git" => vec![
-            "commit",
-            "push",
-            "pull",
-            "status",
-            "checkout",
-        ],
-        "ls" => vec![
-            "-l",
-            "-a",
-            "-la",
-            "--color",
-            "--human-readable",
-        ],
-        "cargo" => vec![
-            "build",
-            "run",
-            "test",
-            "check",
-            "publish",
-        ],
-        _ => vec![ // Fallback for unknown commands
-            "--help",
-            "--version",
-        ],
-    };
+    // 4. Scrape dynamic completions by running `<base_command> --help`!
+    let mut completions: Vec<String> = Vec::new();
+    
+    if !base_command.is_empty() {
+        // We run the command with `--help` in the background and capture its stdout output.
+        // E.g. `mkdir --help` or `git --help`
+        if let Ok(output) = std::process::Command::new(base_command).arg("--help").output() {
+            let help_text = String::from_utf8_lossy(&output.stdout);
+            
+            // This Regex looks for `-` followed by a single letter OR `--` followed by a word (e.g. `-p` or `--parents`)
+            let re = regex::Regex::new(r"(-[a-zA-Z0-9]|--[a-zA-Z0-9\-]+)").unwrap();
+            
+            for cap in re.captures_iter(&help_text) {
+                let flag = cap[0].to_string();
+                if !completions.contains(&flag) {
+                    completions.push(flag); // Save unique flags only
+                }
+            }
+        }
+    }
+
+    // Fallback if the command didn't have a `--help` or we couldn't parse it
+    if completions.is_empty() {
+        completions.push("--help".to_string());
+        completions.push("--version".to_string());
+    }
 
     // MAIN GAME/TUI LOOP
     loop {
@@ -86,8 +84,8 @@ fn main() -> anyhow::Result<()> {
         execute!(stderr, SetForegroundColor(MACCHIATO_SURFACE1))?;
         write!(stderr, "--------------------\r\n")?;
 
-        // Prepare the filtered list
-        let filtered: Vec<&&str> = completions
+        // Prepare the filtered list (Note: completions is now a Vec<String>)
+        let filtered: Vec<&String> = completions
             .iter()
             .filter(|c| c.contains(&search_query))
             .collect();
