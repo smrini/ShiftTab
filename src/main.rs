@@ -73,10 +73,21 @@ fn main() -> anyhow::Result<()> {
     let mut completions: Vec<String> = Vec::new();
     
     if !base_command.is_empty() {
-        // --- NEW: Caching Layer ---
-        // Build a path to a temporary cache file for this specific command (e.g. /tmp/shifttab_cache_mkdir.txt)
-        let mut cache_path = std::env::temp_dir();
-        cache_path.push(format!("shifttab_cache_{}.txt", base_command));
+        // --- NEW: Persistent Caching Layer ---
+        // We use the `directories` crate to find the officially sanctioned cache folder for the current OS.
+        // On Linux, this is typically `~/.cache/shifttab/`. 
+        let cache_path = if let Some(proj_dirs) = directories::ProjectDirs::from("", "", "shifttab") {
+            let cache_dir = proj_dirs.cache_dir();
+            
+            // Programs are responsible for making sure their own cache folders actually exist before writing to them!
+            let _ = std::fs::create_dir_all(cache_dir);
+            
+            // Build the final path: e.g. ~/.cache/shifttab/mkdir.txt
+            cache_dir.join(format!("{}.txt", base_command))
+        } else {
+            // Absolute fallback if the operating system has completely lost track of the user's home directory
+            std::env::temp_dir().join(format!("shifttab_cache_{}.txt", base_command))
+        };
 
         if cache_path.exists() {
             // CACHE HIT: Read directly from the file!
