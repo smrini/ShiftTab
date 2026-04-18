@@ -15,6 +15,11 @@ fn main() -> anyhow::Result<()> {
     // --- NEW: Application State ---
     // A string to hold whatever the user types
     let mut search_query = String::new();
+    // Keep track of which item is currently highlighted
+    let mut selected_index: usize = 0;
+    // Store out final choice so we can use it after the UI closes
+    let mut final_selection: Option<String> = None;
+
     // A hardcoded mock list of command flags/options
     let completions = vec![
         "--all",
@@ -33,10 +38,27 @@ fn main() -> anyhow::Result<()> {
         println!("> {}\r", search_query);
         println!("--------------------\r");
 
+        // Prepare the filtered list
+        let filtered: Vec<&&str> = completions
+            .iter()
+            .filter(|c| c.contains(&search_query))
+            .collect();
+
+        // Ensure our selection doesn't go out of bounds if the list shrinks
+        if filtered.is_empty() {
+            selected_index = 0;
+        } else if selected_index >= filtered.len() {
+            selected_index = filtered.len() - 1;
+        }
+
         // Draw the list of completions
-        // NEW: We filter the list to only include items that contain the user's search query
-        for item in completions.iter().filter(|c| c.contains(&search_query)) {
-            println!("  {}\r", item);
+        for (i, item) in filtered.iter().enumerate() {
+            if i == selected_index {
+                // Highlight the selected item
+                println!("▶ [{}]\r", item);
+            } else {
+                println!("  {}\r", item);
+            }
         }
         
         stdout.flush()?;
@@ -49,6 +71,26 @@ fn main() -> anyhow::Result<()> {
             match key_event.code {
                 // Exit gracefully
                 KeyCode::Esc => break,
+                
+                // Confirm selection
+                KeyCode::Enter => {
+                    if let Some(selected_item) = filtered.get(selected_index) {
+                        final_selection = Some(selected_item.to_string());
+                    }
+                    break;
+                }
+
+                // Navigate up
+                KeyCode::Up => {
+                    selected_index = selected_index.saturating_sub(1);
+                }
+
+                // Navigate down
+                KeyCode::Down => {
+                    if !filtered.is_empty() && selected_index < filtered.len() - 1 {
+                        selected_index += 1;
+                    }
+                }
                 
                 // If the user types a normal character, append it to our query
                 KeyCode::Char(c) => {
@@ -69,5 +111,12 @@ fn main() -> anyhow::Result<()> {
     // Teardown
     execute!(stdout, Show, LeaveAlternateScreen)?;
     disable_raw_mode()?;
+
+    // Print the result in the normal terminal!
+    if let Some(selection) = final_selection {
+        println!("You successfully selected: {}", selection);
+    } else {
+        println!("You cancelled the selection.");
+    }
     Ok(())
 }
