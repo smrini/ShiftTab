@@ -73,19 +73,36 @@ fn main() -> anyhow::Result<()> {
     let mut completions: Vec<String> = Vec::new();
     
     if !base_command.is_empty() {
-        // We run the command with `--help` in the background and capture its stdout output.
-        // E.g. `mkdir --help` or `git --help`
-        if let Ok(output) = std::process::Command::new(base_command).arg("--help").output() {
-            let help_text = String::from_utf8_lossy(&output.stdout);
-            
-            // This Regex looks for `-` followed by a single letter OR `--` followed by a word (e.g. `-p` or `--parents`)
-            let re = regex::Regex::new(r"(-[a-zA-Z0-9]|--[a-zA-Z0-9\-]+)").unwrap();
-            
-            for cap in re.captures_iter(&help_text) {
-                let flag = cap[0].to_string();
-                if !completions.contains(&flag) {
-                    completions.push(flag); // Save unique flags only
+        // --- NEW: Caching Layer ---
+        // Build a path to a temporary cache file for this specific command (e.g. /tmp/shifttab_cache_mkdir.txt)
+        let mut cache_path = std::env::temp_dir();
+        cache_path.push(format!("shifttab_cache_{}.txt", base_command));
+
+        if cache_path.exists() {
+            // CACHE HIT: Read directly from the file!
+            if let Ok(cached_data) = std::fs::read_to_string(&cache_path) {
+                completions = cached_data.lines().map(|s| s.to_string()).collect();
+            }
+        }
+        
+        // CACHE MISS (or cache was empty): We must run the expensive background system process
+        if completions.is_empty() {
+            if let Ok(output) = std::process::Command::new(base_command).arg("--help").output() {
+                let help_text = String::from_utf8_lossy(&output.stdout);
+                
+                // This Regex looks for `-` followed by a single letter OR `--` followed by a word
+                let re = regex::Regex::new(r"(-[a-zA-Z0-9]|--[a-zA-Z0-9\-]+)").unwrap();
+                
+                for cap in re.captures_iter(&help_text) {
+                    let flag = cap[0].to_string();
+                    if !completions.contains(&flag) {
+                        completions.push(flag); // Save unique flags only
+                    }
                 }
+
+                // Write the results to the cache file so we never have to run `--help` for this command again!
+                let cache_contents = completions.join("\n");
+                let _ = std::fs::write(cache_path, cache_contents);
             }
         }
     }
