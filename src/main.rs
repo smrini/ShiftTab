@@ -65,11 +65,20 @@ struct KeyConfig {
     down: String,
     #[serde(default = "default_modifier")]
     modifier: String,  // "ctrl", "alt", or "none"
+    #[serde(default = "default_vim_top")]
+    vim_top: String,  // "g"
+    #[serde(default = "default_vim_bottom")]
+    vim_bottom: String,  // "G"
+    #[serde(default = "default_vim_search")]
+    vim_search: String,  // "/"
 }
 
 fn default_up() -> String { "k".to_string() }
 fn default_down() -> String { "j".to_string() }
 fn default_modifier() -> String { "ctrl".to_string() }
+fn default_vim_top() -> String { "g".to_string() }
+fn default_vim_bottom() -> String { "G".to_string() }
+fn default_vim_search() -> String { "/".to_string() }
 
 impl Default for KeyConfig {
     fn default() -> Self {
@@ -77,6 +86,9 @@ impl Default for KeyConfig {
             up: "k".to_string(),
             down: "j".to_string(),
             modifier: "ctrl".to_string(),
+            vim_top: "g".to_string(),
+            vim_bottom: "G".to_string(),
+            vim_search: "/".to_string(),
         }
     }
 }
@@ -97,7 +109,7 @@ fn main() -> anyhow::Result<()> {
 # Location: ~/.config/shifttab/config.toml
 
 # Display mode: "extended" (full-screen) or "compact" (inline)
-mode = "extended"
+mode = "compact"
 
 # Color customization (RGB values 0-255)
 # Default theme: Catppuccin Mocha
@@ -114,6 +126,11 @@ border = [73, 77, 100]        # Border/separator color
 up = "k"                       # Move up when pressed with the modifier key
 down = "j"                     # Move down when pressed with the modifier key
 modifier = "ctrl"              # Modifier for navigation: "ctrl", "alt", or "none"
+
+# Vim-style navigation (always available)
+vim_top = "g"                  # Go to top of list (press twice: gg)
+vim_bottom = "G"               # Go to bottom of list
+vim_search = "/"               # Enter search mode
 
 # When modifier = "ctrl": Use Ctrl+K to navigate up, Ctrl+J to navigate down
 # When modifier = "alt":  Use Alt+K to navigate up, Alt+J to navigate down
@@ -352,6 +369,9 @@ modifier = "ctrl"              # Modifier for navigation: "ctrl", "alt", or "non
     let color_highlight = Color::Rgb { r: config.colors.highlight.0, g: config.colors.highlight.1, b: config.colors.highlight.2 };
     let color_border = Color::Rgb { r: config.colors.border.0, g: config.colors.border.1, b: config.colors.border.2 };
     
+    let mut last_vim_top_time = std::time::Instant::now();
+    let vim_double_tap_timeout = std::time::Duration::from_millis(300);
+    
     loop {
         // 1. The Render Phase
         if config.mode == Mode::Extended {
@@ -399,12 +419,12 @@ modifier = "ctrl"              # Modifier for navigation: "ctrl", "alt", or "non
         }
 
         // Setup pagination/scrolling for our list
-        // In extended mode, use full terminal height minus space for top padding, search box and separator
+        // In extended mode, use full terminal height minus space for top padding, search box, separator, and status bar
         // In compact mode, limit to 10 rows
         let (_, rows) = crossterm::terminal::size().unwrap_or((80, 24));
         let max_visible_items = if config.mode == Mode::Extended {
-            // Reserve 1 row for top padding + 2 rows for search box and separator
-            (rows as usize).saturating_sub(3).max(3)  // At least 3 rows
+            // Reserve 1 row for top padding + 2 rows for search box and separator + 1 row for status bar
+            (rows as usize).saturating_sub(4).max(3)  // At least 3 rows
         } else {
             10  // Compact mode keeps 10 rows
         };
@@ -418,10 +438,22 @@ modifier = "ctrl"              # Modifier for navigation: "ctrl", "alt", or "non
         // Take only our visible window's worth of items. Collect them to make math easier.
         let visible_items: Vec<_> = filtered.iter().enumerate().skip(start_idx).take(max_visible_items).collect();
 
-        // Let's figure out how wide the terminal is to build our 50/50 split!
+        // Let's figure out how wide the terminal is to build our pane split
         let (cols, _) = crossterm::terminal::size().unwrap_or((80, 24));
-        let left_pane_width = (cols / 2).saturating_sub(3) as usize; // (Left) - (Padding)
-        let right_pane_width = (cols / 2).saturating_sub(2) as usize; // (Right) - (Padding)
+        
+        // In compact mode, use more space for the description; in extended mode, use 50/50 split
+        let left_pane_width = if config.mode == Mode::Extended {
+            (cols / 2).saturating_sub(3) as usize
+        } else {
+            // Compact mode: narrow left pane (just enough for flag + prefix)
+            25
+        };
+        let right_pane_width = if config.mode == Mode::Extended {
+            (cols / 2).saturating_sub(2) as usize
+        } else {
+            // Compact mode: use most of remaining width for description
+            (cols as usize).saturating_sub(left_pane_width + 5)
+        };
 
         // Get the description of the CURRENTLY SELECTED item so we can wrap it over multiple lines
         let selected_desc = if let Some(sel) = filtered.get(selected_index) {
@@ -524,6 +556,49 @@ modifier = "ctrl"              # Modifier for navigation: "ctrl", "alt", or "non
             }
         }
         
+        // --- STATUS BAR ---
+        if !filtered.is_empty() {
+            let (cols, _) = crossterm::terminal::size().unwrap_or((80, 24));
+            let status_text = format!("{}/{}", selected_index + 1, filtered.len());
+            
+            if config.mode == Mode::Extended {
+                // Build scrollbar for extended mode (spanning full width)
+                let scrollbar_width = (cols as usize).saturating_sub(status_text.len() + 5);
+                let filled = if filtered.len() <= 1 { 
+                    scrollbar_width 
+                } else {
+                    (selected_index * scrollbar_width) / (filtered.len() - 1)
+                };
+                let scrollbar = format!("{}{}",
+                    "█".repeat(filled.min(scrollbar_width)),
+                    "░".repeat(scrollbar_width.saturating_sub(filled))
+                );
+                
+                // Render status bar (no newline - it's the last row)
+                execute!(stderr, SetForegroundColor(color_border))?;
+                write!(stderr, " {} ", scrollbar)?;
+                execute!(stderr, SetForegroundColor(color_text))?;
+                write!(stderr, "[{}]", status_text)?;
+            } else {
+                // Compact mode: show scrollbar spanning full width + status counter
+                let scrollbar_width = (cols as usize).saturating_sub(status_text.len() + 5);  // -6 for spacing and brackets
+                let filled = if filtered.len() <= 1 { 
+                    scrollbar_width 
+                } else {
+                    (selected_index * scrollbar_width) / (filtered.len() - 1)
+                };
+                let scrollbar = format!("{}{}",
+                    "█".repeat(filled.min(scrollbar_width)),
+                    "░".repeat(scrollbar_width.saturating_sub(filled))
+                );
+                
+                execute!(stderr, SetForegroundColor(color_border))?;
+                write!(stderr, " {} ", scrollbar)?;
+                execute!(stderr, SetForegroundColor(color_text))?;
+                write!(stderr, "[{}] ", status_text)?;
+            }
+        }
+        
         // Reset colors before moving on, to make sure nothing weird happens with trailing artifacts
         execute!(stderr, ResetColor)?;
         stderr.flush()?;
@@ -560,10 +635,6 @@ modifier = "ctrl"              # Modifier for navigation: "ctrl", "alt", or "non
                 KeyCode::Char(c) => {
                     let c_str = c.to_string();
                     
-                    // Check if this character matches a navigation key
-                    let is_up_key = c_str == config.keys.up;
-                    let is_down_key = c_str == config.keys.down;
-                    
                     // Check if the required modifier is pressed
                     let modifier_matches = match config.keys.modifier.as_str() {
                         "ctrl" => key_event.modifiers.contains(KeyModifiers::CONTROL),
@@ -571,6 +642,39 @@ modifier = "ctrl"              # Modifier for navigation: "ctrl", "alt", or "non
                         "none" => true,  // No modifier required
                         _ => false,      // Unknown modifier, treat as no match
                     };
+                    
+                    // --- VIM KEYBINDINGS (require modifier) ---
+                    // "/" enters search mode (clears current search)
+                    if c_str == config.keys.vim_search && modifier_matches {
+                        search_query.clear();
+                        continue;
+                    }
+                    
+                    // "G" goes to bottom
+                    if c_str == config.keys.vim_bottom && modifier_matches {
+                        if !filtered.is_empty() {
+                            selected_index = filtered.len() - 1;
+                        }
+                        continue;
+                    }
+                    
+                    // "g" goes to top (requires double tap: gg)
+                    if c_str == config.keys.vim_top && modifier_matches {
+                        let now = std::time::Instant::now();
+                        if now.duration_since(last_vim_top_time) < vim_double_tap_timeout {
+                            // Double tap detected, go to top
+                            selected_index = 0;
+                            last_vim_top_time = std::time::Instant::now() - std::time::Duration::from_secs(1); // Reset
+                        } else {
+                            // First tap, set timer
+                            last_vim_top_time = now;
+                        }
+                        continue;
+                    }
+                    
+                    // Check if this character matches a navigation key
+                    let is_up_key = c_str == config.keys.up;
+                    let is_down_key = c_str == config.keys.down;
                     
                     // Navigate only if: key matches AND modifier matches
                     if (is_up_key || is_down_key) && modifier_matches {
