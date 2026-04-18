@@ -1,4 +1,4 @@
-use crossterm::event::{read, Event, KeyCode};
+use crossterm::event::{read, Event, KeyCode, KeyModifiers};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -8,11 +8,11 @@ use crossterm::execute;
 use serde::Deserialize;
 use std::io::{stderr, Write};
 
-// --- NEW: Catppuccin Mocha Color Palette ---
-const MACCHIATO_BASE: Color = Color::Rgb { r: 36, g: 39, b: 58 };
-const MACCHIATO_TEXT: Color = Color::Rgb { r: 202, g: 211, b: 245 };
-const MACCHIATO_MAUVE: Color = Color::Rgb { r: 198, g: 160, b: 246 };
-const MACCHIATO_SURFACE1: Color = Color::Rgb { r: 73, g: 77, b: 100 };
+// --- DEFAULT: Catppuccin Mocha Color Palette ---
+const DEFAULT_BASE: (u8, u8, u8) = (36, 39, 58);
+const DEFAULT_TEXT: (u8, u8, u8) = (202, 211, 245);
+const DEFAULT_HIGHLIGHT: (u8, u8, u8) = (198, 160, 246);
+const DEFAULT_BORDER: (u8, u8, u8) = (73, 77, 100);
 
 #[derive(Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -27,13 +27,102 @@ impl Default for Mode {
     }
 }
 
+#[derive(Deserialize, Debug)]
+#[serde(default)]
+struct ColorConfig {
+    #[serde(default = "default_base")]
+    base: (u8, u8, u8),
+    #[serde(default = "default_text")]
+    text: (u8, u8, u8),
+    #[serde(default = "default_highlight")]
+    highlight: (u8, u8, u8),
+    #[serde(default = "default_border")]
+    border: (u8, u8, u8),
+}
+
+fn default_base() -> (u8, u8, u8) { DEFAULT_BASE }
+fn default_text() -> (u8, u8, u8) { DEFAULT_TEXT }
+fn default_highlight() -> (u8, u8, u8) { DEFAULT_HIGHLIGHT }
+fn default_border() -> (u8, u8, u8) { DEFAULT_BORDER }
+
+impl Default for ColorConfig {
+    fn default() -> Self {
+        ColorConfig {
+            base: DEFAULT_BASE,
+            text: DEFAULT_TEXT,
+            highlight: DEFAULT_HIGHLIGHT,
+            border: DEFAULT_BORDER,
+        }
+    }
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(default)]
+struct KeyConfig {
+    #[serde(default = "default_up")]
+    up: String,
+    #[serde(default = "default_down")]
+    down: String,
+    #[serde(default = "default_modifier")]
+    modifier: String,  // "ctrl", "alt", or "none"
+}
+
+fn default_up() -> String { "k".to_string() }
+fn default_down() -> String { "j".to_string() }
+fn default_modifier() -> String { "ctrl".to_string() }
+
+impl Default for KeyConfig {
+    fn default() -> Self {
+        KeyConfig {
+            up: "k".to_string(),
+            down: "j".to_string(),
+            modifier: "ctrl".to_string(),
+        }
+    }
+}
+
 #[derive(Deserialize, Default, Debug)]
 #[serde(default)]
 struct Config {
     mode: Mode,
+    #[serde(default)]
+    colors: ColorConfig,
+    #[serde(default)]
+    keys: KeyConfig,
 }
 
 fn main() -> anyhow::Result<()> {
+    // Default configuration content
+    const DEFAULT_CONFIG: &str = r#"# ShiftTab Configuration File
+# Location: ~/.config/shifttab/config.toml
+
+# Display mode: "extended" (full-screen) or "compact" (inline)
+mode = "extended"
+
+# Color customization (RGB values 0-255)
+# Default theme: Catppuccin Mocha
+[colors]
+base = [36, 39, 58]           # Background color
+text = [202, 211, 245]        # Text color
+highlight = [198, 160, 246]   # Highlight/selected item color
+border = [73, 77, 100]        # Border/separator color
+
+# Keybinding customization
+# Navigation uses modifiers (Ctrl or Alt) so you can type normally
+# For example: Ctrl+K moves up, plain 'k' is just a regular character
+[keys]
+up = "k"                       # Move up when pressed with the modifier key
+down = "j"                     # Move down when pressed with the modifier key
+modifier = "ctrl"              # Modifier for navigation: "ctrl", "alt", or "none"
+
+# When modifier = "ctrl": Use Ctrl+K to navigate up, Ctrl+J to navigate down
+# When modifier = "alt":  Use Alt+K to navigate up, Alt+J to navigate down
+# When modifier = "none": hjkl always navigate (same as old behavior)
+# Arrow keys always work for navigation
+# Selection: Enter always selects
+# Exit: Escape always exits
+"#;
+
     // --- Step 14: Load Configuration File ---
     let mut config = Config::default();
     if let Some(proj_dirs) = directories::ProjectDirs::from("", "", "shifttab") {
@@ -43,14 +132,17 @@ fn main() -> anyhow::Result<()> {
 
         if config_file.exists() {
             if let Ok(contents) = std::fs::read_to_string(&config_file) {
-                if let Ok(parsed) = toml::from_str(&contents) {
+                // If file is empty, populate it with defaults
+                if contents.trim().is_empty() {
+                    let _ = std::fs::write(&config_file, DEFAULT_CONFIG);
+                } else if let Ok(parsed) = toml::from_str(&contents) {
+                    // File has content, parse it
                     config = parsed;
                 }
             }
         } else {
-            // Write a default config if none exists to show the user it's there
-            let default_toml = "mode = \"extended\"\n";
-            let _ = std::fs::write(&config_file, default_toml);
+            // File doesn't exist, create it with defaults
+            let _ = std::fs::write(&config_file, DEFAULT_CONFIG);
         }
     }
 
@@ -254,34 +346,43 @@ fn main() -> anyhow::Result<()> {
     }
 
     // MAIN GAME/TUI LOOP
+    // Convert config colors to crossterm Color objects
+    let color_base = Color::Rgb { r: config.colors.base.0, g: config.colors.base.1, b: config.colors.base.2 };
+    let color_text = Color::Rgb { r: config.colors.text.0, g: config.colors.text.1, b: config.colors.text.2 };
+    let color_highlight = Color::Rgb { r: config.colors.highlight.0, g: config.colors.highlight.1, b: config.colors.highlight.2 };
+    let color_border = Color::Rgb { r: config.colors.border.0, g: config.colors.border.1, b: config.colors.border.2 };
+    
     loop {
         // 1. The Render Phase
         if config.mode == Mode::Extended {
             execute!(
                 stderr, 
-                SetBackgroundColor(MACCHIATO_BASE),
-                SetForegroundColor(MACCHIATO_TEXT),
+                SetBackgroundColor(color_base),
+                SetForegroundColor(color_text),
                 Clear(ClearType::All), 
                 MoveTo(0, 0)
             )?;
+            // Add top padding (1 blank line)
+            execute!(stderr, SetBackgroundColor(color_base))?;
+            write!(stderr, "\r\n")?;
         } else {
             execute!(
                 stderr, 
                 RestorePosition, // Go back to the top of our 12-line reserved block
                 ResetColor,      // RESET COLOR SO CLEAR DOESN'T BLEED TO THE BOTTOM OF THE TERMINAL
                 Clear(ClearType::FromCursorDown),
-                SetBackgroundColor(MACCHIATO_BASE),
-                SetForegroundColor(MACCHIATO_TEXT)
+                SetBackgroundColor(color_base),
+                SetForegroundColor(color_text)
             )?;
         }
         
         // Draw the Search Box (styled!)
-        execute!(stderr, SetForegroundColor(MACCHIATO_MAUVE))?;
+        execute!(stderr, SetForegroundColor(color_highlight))?;
         write!(stderr, "> ")?;
-        execute!(stderr, SetForegroundColor(MACCHIATO_TEXT), Clear(ClearType::UntilNewLine))?;
+        execute!(stderr, SetForegroundColor(color_text), Clear(ClearType::UntilNewLine))?;
         write!(stderr, "{}\r\n", search_query)?;
         
-        execute!(stderr, SetForegroundColor(MACCHIATO_SURFACE1), Clear(ClearType::UntilNewLine))?;
+        execute!(stderr, SetForegroundColor(color_border), Clear(ClearType::UntilNewLine))?;
         write!(stderr, "--------------------\r\n")?;
 
         // Prepare the filtered list (Note: completions is now a Vec<String>)
@@ -298,7 +399,15 @@ fn main() -> anyhow::Result<()> {
         }
 
         // Setup pagination/scrolling for our list
-        let max_visible_items = 10;
+        // In extended mode, use full terminal height minus space for top padding, search box and separator
+        // In compact mode, limit to 10 rows
+        let (_, rows) = crossterm::terminal::size().unwrap_or((80, 24));
+        let max_visible_items = if config.mode == Mode::Extended {
+            // Reserve 1 row for top padding + 2 rows for search box and separator
+            (rows as usize).saturating_sub(3).max(3)  // At least 3 rows
+        } else {
+            10  // Compact mode keeps 10 rows
+        };
         let mut start_idx = 0;
         
         // If we are currently selecting an item beyond our window, scroll the window!
@@ -346,8 +455,8 @@ fn main() -> anyhow::Result<()> {
         }
         if !current_line.is_empty() { desc_lines.push(current_line); }
 
-        // Draw the split UI! We always draw 10 rows to maintain the grid.
-        for row in 0..10 {
+        // Draw the split UI! We draw as many rows as available in the terminal.
+        for row in 0..max_visible_items {
             // --- LEFT PANE (The Flags) ---
             let (is_selected, left_text) = if row < visible_items.len() {
                 let (i, item) = visible_items[row];
@@ -386,29 +495,29 @@ fn main() -> anyhow::Result<()> {
             // --- RENDER THE ROW ---
             if is_selected {
                 // Left Pane highlighted
-                execute!(stderr, SetBackgroundColor(MACCHIATO_MAUVE), SetForegroundColor(MACCHIATO_BASE))?;
+                execute!(stderr, SetBackgroundColor(color_highlight), SetForegroundColor(color_base))?;
                 write!(stderr, "{}", left_text)?;
                 
                 // The middle separator line
-                execute!(stderr, SetBackgroundColor(MACCHIATO_BASE), SetForegroundColor(MACCHIATO_SURFACE1))?;
+                execute!(stderr, SetBackgroundColor(color_base), SetForegroundColor(color_border))?;
                 write!(stderr, " │")?;
                 
                 // Right Pane standard colors
-                execute!(stderr, SetForegroundColor(MACCHIATO_TEXT))?;
+                execute!(stderr, SetForegroundColor(color_text))?;
                 write!(stderr, "{}", right_text)?;
                 execute!(stderr, Clear(ClearType::UntilNewLine))?;
                 write!(stderr, "\r\n")?;
             } else {
                 // Standard row colors across the board
-                execute!(stderr, SetBackgroundColor(MACCHIATO_BASE), SetForegroundColor(MACCHIATO_TEXT))?;
+                execute!(stderr, SetBackgroundColor(color_base), SetForegroundColor(color_text))?;
                 write!(stderr, "{}", left_text)?;
                 
                 // The middle separator line
-                execute!(stderr, SetForegroundColor(MACCHIATO_SURFACE1))?;
+                execute!(stderr, SetForegroundColor(color_border))?;
                 write!(stderr, " │")?;
                 
                 // Right Pane standard colors
-                execute!(stderr, SetForegroundColor(MACCHIATO_TEXT))?;
+                execute!(stderr, SetForegroundColor(color_text))?;
                 write!(stderr, "{}", right_text)?;
                 execute!(stderr, Clear(ClearType::UntilNewLine))?;
                 write!(stderr, "\r\n")?;
@@ -425,10 +534,21 @@ fn main() -> anyhow::Result<()> {
         // 3. The Update Phase
         if let Event::Key(key_event) = event {
             match key_event.code {
-                // Exit gracefully
+                // Exit gracefully - ESC always works
                 KeyCode::Esc => break,
                 
-                // Confirm selection
+                // Arrow keys and Ctrl bindings always work for navigation
+                KeyCode::Up => {
+                    selected_index = selected_index.saturating_sub(1);
+                }
+
+                KeyCode::Down => {
+                    if !filtered.is_empty() && selected_index < filtered.len() - 1 {
+                        selected_index += 1;
+                    }
+                }
+
+                // Enter always selects (as separate key, not as char)
                 KeyCode::Enter => {
                     if let Some(selected_item) = filtered.get(selected_index) {
                         final_selection = Some(selected_item.0.to_string());
@@ -436,21 +556,35 @@ fn main() -> anyhow::Result<()> {
                     break;
                 }
 
-                // Navigate up
-                KeyCode::Up => {
-                    selected_index = selected_index.saturating_sub(1);
-                }
-
-                // Navigate down
-                KeyCode::Down => {
-                    if !filtered.is_empty() && selected_index < filtered.len() - 1 {
-                        selected_index += 1;
-                    }
-                }
-                
-                // If the user types a normal character, append it to our query
+                // Context-aware character input with modifier support
                 KeyCode::Char(c) => {
-                    search_query.push(c);
+                    let c_str = c.to_string();
+                    
+                    // Check if this character matches a navigation key
+                    let is_up_key = c_str == config.keys.up;
+                    let is_down_key = c_str == config.keys.down;
+                    
+                    // Check if the required modifier is pressed
+                    let modifier_matches = match config.keys.modifier.as_str() {
+                        "ctrl" => key_event.modifiers.contains(KeyModifiers::CONTROL),
+                        "alt" => key_event.modifiers.contains(KeyModifiers::ALT),
+                        "none" => true,  // No modifier required
+                        _ => false,      // Unknown modifier, treat as no match
+                    };
+                    
+                    // Navigate only if: key matches AND modifier matches
+                    if (is_up_key || is_down_key) && modifier_matches {
+                        if is_up_key {
+                            selected_index = selected_index.saturating_sub(1);
+                        } else if is_down_key {
+                            if !filtered.is_empty() && selected_index < filtered.len() - 1 {
+                                selected_index += 1;
+                            }
+                        }
+                    } else {
+                        // Not a navigation key with correct modifier, append to search
+                        search_query.push(c);
+                    }
                 }
                 
                 // If the user hits backspace, remove the last character
@@ -505,9 +639,13 @@ fn main() -> anyhow::Result<()> {
             }
         }
         
+        // Extract just the base flag, removing the description in parentheses
+        // E.g., "-a (--all)" becomes "-a"
+        let output_flag = selection.split_whitespace().next().unwrap_or(&selection);
+        
         // Print the assembled, finalized buffer to stdout!
         // We append a trailing space so the user can immediately type the next argument!
-        print!("{}{} ", new_buffer, selection);
+        print!("{}{} ", new_buffer, output_flag);
     }
     
     Ok(())
