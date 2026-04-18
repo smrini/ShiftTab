@@ -282,8 +282,8 @@ vim_search = "/"               # Enter search mode
     let mut final_selection: Option<String> = None;
 
     // 4. Scrape dynamic completions by running `<base_command> --help`!
-    // We now store a tuple of (Flag, Description)
-    let mut completions: Vec<(String, String)> = Vec::new();
+    // We now store a tuple of (Flag, Description, Score)
+    let mut completions: Vec<(String, String, usize)> = Vec::new();
     
     if !base_command.is_empty() {
         // --- NEW: Persistent Caching Layer ---
@@ -306,11 +306,12 @@ vim_search = "/"               # Enter search mode
             // CACHE HIT: Read directly from the file!
             if let Ok(cached_data) = std::fs::read_to_string(&cache_path) {
                 for line in cached_data.lines() {
-                    let parts: Vec<&str> = line.splitn(2, '\t').collect();
-                    if parts.len() == 2 {
-                        completions.push((parts[0].to_string(), parts[1].to_string()));
+                    let parts: Vec<&str> = line.splitn(3, '\t').collect();
+                    if parts.len() >= 2 {
+                        let score = parts.get(2).and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
+                        completions.push((parts[0].to_string(), parts[1].to_string(), score));
                     } else if parts.len() == 1 {
-                        completions.push((parts[0].to_string(), String::new()));
+                        completions.push((parts[0].to_string(), String::new(), 0));
                     }
                 }
             }
@@ -333,8 +334,8 @@ vim_search = "/"               # Enter search mode
                     if trimmed.starts_with('-') {
                         // NEW FLAG FOUND! Save the previous one first.
                         if let Some(f) = current_flag.take() {
-                            if !completions.iter().any(|(existing_f, _)| existing_f == &f) {
-                                completions.push((f, current_desc.trim().to_string()));
+                            if !completions.iter().any(|(existing_f, _, _)| existing_f == &f) {
+                                completions.push((f, current_desc.trim().to_string(), 0));
                             }
                         }
                         
@@ -391,14 +392,14 @@ vim_search = "/"               # Enter search mode
                 
                 // Don't forget to push the very last flag
                 if let Some(f) = current_flag {
-                    if !completions.iter().any(|(existing_f, _)| existing_f == &f) {
-                        completions.push((f, current_desc.trim().to_string()));
+                    if !completions.iter().any(|(existing_f, _, _)| existing_f == &f) {
+                        completions.push((f, current_desc.trim().to_string(), 0));
                     }
                 }
 
                 // Write the results to the cache file so we never have to run `--help` for this command again!
-                // We use a Tab (\t) to cleanly separate the Flag from the Description
-                let cache_contents: Vec<String> = completions.iter().map(|(f, d)| format!("{}\t{}", f, d)).collect();
+                // We use Tab (\t) to separate Flag, Description, and Score
+                let cache_contents: Vec<String> = completions.iter().map(|(f, d, s)| format!("{}\t{}\t{}", f, d, s)).collect();
                 let _ = std::fs::write(cache_path, cache_contents.join("\n"));
             }
         }
@@ -406,8 +407,8 @@ vim_search = "/"               # Enter search mode
 
     // Fallback if the command didn't have a `--help` or we couldn't parse it
     if completions.is_empty() {
-        completions.push(("--help".to_string(), "Show help menu".to_string()));
-        completions.push(("--version".to_string(), "Show version info".to_string()));
+        completions.push(("--help".to_string(), "Show help menu".to_string(), 0));
+        completions.push(("--version".to_string(), "Show version info".to_string(), 0));
     }
 
     // MAIN GAME/TUI LOOP
@@ -453,8 +454,11 @@ vim_search = "/"               # Enter search mode
         execute!(stderr, SetForegroundColor(color_border), Clear(ClearType::UntilNewLine))?;
         write!(stderr, "--------------------\r\n")?;
 
-        // Prepare the filtered list (Note: completions is now a Vec<String>)
-        let filtered: Vec<&(String, String)> = completions
+        // Sort completions by score (highest first)
+        completions.sort_by(|a, b| b.2.cmp(&a.2));
+
+        // Prepare the filtered list (Note: completions is now a Vec with score)
+        let filtered: Vec<&(String, String, usize)> = completions
             .iter()
             .filter(|c| c.0.contains(&search_query))
             .collect();
@@ -762,21 +766,34 @@ vim_search = "/"               # Enter search mode
 
                 // Enter always selects (as separate key, not as char)
                 KeyCode::Enter => {
+                    let mut selected_flags = Vec::new();
+                    
                     if multi_select_mode && !selected_items.is_empty() {
                         // Multi-select mode: combine all selected items
                         let mut selections = vec![];
                         let mut indices: Vec<_> = selected_items.iter().copied().collect();
                         indices.sort();
                         for idx in indices {
-                            if let Some((flag, _)) = filtered.get(idx) {
+                            if let Some((flag, _, _)) = filtered.get(idx) {
                                 selections.push(flag.clone());
+                                selected_flags.push(flag.clone());
                             }
                         }
                         final_selection = Some(selections.join(" "));
                     } else if let Some(selected_item) = filtered.get(selected_index) {
                         // Single-select mode: just select current item
-                        final_selection = Some(selected_item.0.to_string());
+                        let selected_flag = selected_item.0.clone();
+                        final_selection = Some(selected_flag.clone());
+                        selected_flags.push(selected_flag);
                     }
+                    
+                    // Update scores for selected flags (outside of borrow scope)
+                    for flag in selected_flags {
+                        if let Some(entry) = completions.iter_mut().find(|(f, _, _)| f == &flag) {
+                            entry.2 += 1;
+                        }
+                    }
+                    
                     break;
                 }
 
@@ -874,6 +891,16 @@ vim_search = "/"               # Enter search mode
                 // Ignore all other keys for now
                 _ => {}
             }
+        }
+    }
+
+    // Save updated scores back to cache
+    if !base_command.is_empty() {
+        if let Some(proj_dirs) = directories::ProjectDirs::from("", "", "shifttab") {
+            let cache_dir = proj_dirs.cache_dir();
+            let cache_path = cache_dir.join(format!("{}.txt", base_command));
+            let cache_contents: Vec<String> = completions.iter().map(|(f, d, s)| format!("{}\t{}\t{}", f, d, s)).collect();
+            let _ = std::fs::write(cache_path, cache_contents.join("\n"));
         }
     }
 
