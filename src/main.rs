@@ -5,7 +5,7 @@ use crossterm::terminal::{
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::style::{Color, ResetColor, SetBackgroundColor, SetForegroundColor};
 use crossterm::execute;
-use std::io::{stdout, Write};
+use std::io::{stderr, Write};
 
 // --- NEW: Catppuccin Mocha Color Palette ---
 const MACCHIATO_BASE: Color = Color::Rgb { r: 36, g: 39, b: 58 };
@@ -16,8 +16,8 @@ const MACCHIATO_SURFACE1: Color = Color::Rgb { r: 73, g: 77, b: 100 };
 fn main() -> anyhow::Result<()> {
     enable_raw_mode()?;
 
-    let mut stdout = stdout();
-    execute!(stdout, EnterAlternateScreen, Hide)?;
+    let mut stderr = stderr();
+    execute!(stderr, EnterAlternateScreen, Hide)?;
 
     // --- NEW: Application State ---
     // A string to hold whatever the user types
@@ -40,7 +40,7 @@ fn main() -> anyhow::Result<()> {
     loop {
         // 1. The Render Phase
         execute!(
-            stdout, 
+            stderr, 
             SetBackgroundColor(MACCHIATO_BASE),
             SetForegroundColor(MACCHIATO_TEXT),
             Clear(ClearType::All), 
@@ -48,13 +48,13 @@ fn main() -> anyhow::Result<()> {
         )?;
         
         // Draw the Search Box (styled!)
-        execute!(stdout, SetForegroundColor(MACCHIATO_MAUVE))?;
-        print!("> ");
-        execute!(stdout, SetForegroundColor(MACCHIATO_TEXT))?;
-        println!("{}\r", search_query);
+        execute!(stderr, SetForegroundColor(MACCHIATO_MAUVE))?;
+        write!(stderr, "> ")?;
+        execute!(stderr, SetForegroundColor(MACCHIATO_TEXT))?;
+        write!(stderr, "{}\r\n", search_query)?;
         
-        execute!(stdout, SetForegroundColor(MACCHIATO_SURFACE1))?;
-        println!("--------------------\r");
+        execute!(stderr, SetForegroundColor(MACCHIATO_SURFACE1))?;
+        write!(stderr, "--------------------\r\n")?;
 
         // Prepare the filtered list
         let filtered: Vec<&&str> = completions
@@ -75,25 +75,25 @@ fn main() -> anyhow::Result<()> {
             if i == selected_index {
                 // Highlight the selected item (Mauve BG, Base FG)
                 execute!(
-                    stdout, 
+                    stderr, 
                     SetBackgroundColor(MACCHIATO_MAUVE),
                     SetForegroundColor(MACCHIATO_BASE)
                 )?;
-                println!(" ▶ {} \r", item);
+                write!(stderr, " ▶ {} \r\n", item)?;
             } else {
                 // Normal item
                 execute!(
-                    stdout, 
+                    stderr, 
                     SetBackgroundColor(MACCHIATO_BASE),
                     SetForegroundColor(MACCHIATO_TEXT)
                 )?;
-                println!("   {} \r", item);
+                write!(stderr, "   {} \r\n", item)?;
             }
         }
         
         // Reset colors before moving on, to make sure nothing weird happens with trailing artifacts
-        execute!(stdout, ResetColor)?;
-        stdout.flush()?;
+        execute!(stderr, ResetColor)?;
+        stderr.flush()?;
 
         // 2. The Input Phase
         let event = read()?; 
@@ -141,14 +141,13 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Teardown
-    execute!(stdout, Show, LeaveAlternateScreen)?;
+    execute!(stderr, Show, LeaveAlternateScreen)?;
     disable_raw_mode()?;
 
-    // Print the result in the normal terminal!
+    // Print ONLY the bare result to stdout so the shell can capture it!
     if let Some(selection) = final_selection {
-        println!("You successfully selected: {}", selection);
-    } else {
-        println!("You cancelled the selection.");
+        print!("{}", selection);
     }
+    
     Ok(())
 }
