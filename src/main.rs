@@ -26,8 +26,30 @@ fn main() -> anyhow::Result<()> {
     // 2. The first argument (index 1) is whatever the user has typed so far (the LBUFFER)
     let user_buffer = args.get(1).map(String::as_str).unwrap_or("");
     
-    // 3. Find the first word they typed (the base command like 'git' or 'ls')
-    let base_command = user_buffer.split_whitespace().next().unwrap_or("");
+    // 3. Find the actual base command! Handle "wrappers" cleverly.
+    let wrappers = ["sudo", "doas", "time", "watch", "env", "xargs"];
+    let tokens: Vec<&str> = user_buffer.split_whitespace().collect();
+    
+    let mut base_command = "";
+    let mut base_cmd_index = 0;
+    
+    for (i, &word) in tokens.iter().enumerate() {
+        if wrappers.contains(&word) {
+            // It's a wrapper! We tentatively mark it as our base_command,
+            // but we keep looping to try and find a BETTER real command.
+            base_command = word;
+            base_cmd_index = i;
+        } else if word.starts_with('-') {
+            // If we hit a flag (like "-u"), we stop looking. 
+            // Whatever command we found previously (even if it was 'sudo') is our final target.
+            break;
+        } else {
+            // We found a concrete, non-wrapper target command!
+            base_command = word;
+            base_cmd_index = i;
+            break;
+        }
+    }
 
     // 4. Find out if they are currently midway through typing a word
     // If the buffer DOESN'T end in a space, they are typing a partial word (e.g. "cargo b")
@@ -35,13 +57,12 @@ fn main() -> anyhow::Result<()> {
     let is_typing_partial_word = !user_buffer.is_empty() && !user_buffer.ends_with(char::is_whitespace);
 
     // --- Application State ---
-    // A string to hold whatever the user types inside our search box
-    // NEW: If they were typing a partial word, extract it from the line and preload the search box!
-    let mut search_query = if is_typing_partial_word {
-        user_buffer.split_whitespace().last().unwrap_or("").to_string()
-    } else {
-        String::new()
-    };
+    // If they are typing a partial word, BUT that word is the base command itself (e.g. "sudo mkdir" without a space),
+    // we don't want to use "mkdir" as the search query for flags! We only filter if they are typing an argument AFTER the command.
+    let mut search_query = String::new();
+    if is_typing_partial_word && tokens.len() > base_cmd_index + 1 {
+        search_query = tokens.last().unwrap_or(&"").to_string();
+    }
 
     // Keep track of which item is currently highlighted
     let mut selected_index: usize = 0;
