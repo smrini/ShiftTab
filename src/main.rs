@@ -29,9 +29,20 @@ fn main() -> anyhow::Result<()> {
     // 3. Find the first word they typed (the base command like 'git' or 'ls')
     let base_command = user_buffer.split_whitespace().next().unwrap_or("");
 
+    // 4. Find out if they are currently midway through typing a word
+    // If the buffer DOESN'T end in a space, they are typing a partial word (e.g. "cargo b")
+    // If it DOES end in a space (e.g. "cargo "), they are waiting to start a fresh word.
+    let is_typing_partial_word = !user_buffer.is_empty() && !user_buffer.ends_with(char::is_whitespace);
+
     // --- Application State ---
     // A string to hold whatever the user types inside our search box
-    let mut search_query = String::new();
+    // NEW: If they were typing a partial word, extract it from the line and preload the search box!
+    let mut search_query = if is_typing_partial_word {
+        user_buffer.split_whitespace().last().unwrap_or("").to_string()
+    } else {
+        String::new()
+    };
+
     // Keep track of which item is currently highlighted
     let mut selected_index: usize = 0;
     // Store out final choice so we can use it after the UI closes
@@ -172,9 +183,29 @@ fn main() -> anyhow::Result<()> {
     execute!(stderr, Show, LeaveAlternateScreen)?;
     disable_raw_mode()?;
 
-    // Print ONLY the bare result to stdout so the shell can capture it!
+    // Output the completed user buffer back to the shell!
     if let Some(selection) = final_selection {
-        print!("{}", selection);
+        let mut new_buffer = user_buffer.to_string();
+
+        if is_typing_partial_word {
+            // Find the index of the last space they typed before their partial word
+            if let Some(last_space_idx) = new_buffer.rfind(char::is_whitespace) {
+                // Slice off the partial word so we can inject the cleanly selected item on top
+                new_buffer.truncate(last_space_idx + 1);
+            } else {
+                // If there's no spaces in the whole string, just clear it
+                new_buffer.clear();
+            }
+        } else {
+            // If they weren't typing a partial word (e.g. "ls "), we need to add a space 
+            // ourselves so the flag doesn't stick to the last argument.
+            if !new_buffer.is_empty() && !new_buffer.ends_with(char::is_whitespace) {
+                new_buffer.push(' ');
+            }
+        }
+        
+        // Print the assembled, finalized buffer to stdout!
+        print!("{}{}", new_buffer, selection);
     }
     
     Ok(())

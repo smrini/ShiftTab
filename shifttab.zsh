@@ -1,18 +1,16 @@
 # shifttab.zsh - The bridge between ZLE (Zsh Line Editor) and our Rust binary
 
 function _shifttab_widget() {
-    # 1. Run the Rust binary and pass what the user has typed ($LBUFFER) as the first argument
-    # We still capture its pure text output
-    local selected_flag=$(/home/dev/ShiftTab/target/debug/ShiftTab "$LBUFFER" </dev/tty)
+    # 1. Ask Rust: "Here is my whole line buffer. Tell me what it SHOULD be."
+    local new_buffer=$(/home/dev/ShiftTab/target/debug/ShiftTab "$LBUFFER" </dev/tty)
 
-    # 2. If the user picked something (didn't just press Escape),
-    # insert a space and the new text into the current line buffer!
-    if [[ -n "$selected_flag" ]]; then
-        # LBUFFER represents the text to the LEFT of the user's cursor
-        LBUFFER+=" $selected_flag"
+    # 2. If the user didn't cancel (the output isn't empty)
+    if [[ -n "$new_buffer" ]]; then
+        # Replace the entire line buffer with Rust's beautifully formatting output
+        LBUFFER="$new_buffer"
     fi
 
-    # 3. Tell Zsh to redraw the prompt line to show the new text
+    # 3. Tell Zsh to redraw the prompt line
     zle reset-prompt
 }
 
