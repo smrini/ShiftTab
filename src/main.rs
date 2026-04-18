@@ -186,8 +186,8 @@ fn main() -> anyhow::Result<()> {
                         let mut flags_on_line = Vec::new();
                         let mut desc_start_pos = 0;
                         
-                        // Tokenize by whitespace
-                        let tokens: Vec<&str> = line.split_whitespace().collect();
+                        // Tokenize by whitespace (using trimmed line for consistency)
+                        let tokens: Vec<&str> = trimmed.split_whitespace().collect();
                         
                         // Collect all consecutive tokens that are flags (start with -)
                         for (idx, token) in tokens.iter().enumerate() {
@@ -322,12 +322,23 @@ fn main() -> anyhow::Result<()> {
         };
 
         // Basic Word Wrap logic: split the description text so it fits securely inside the right_pane_width
+        // Using .chars().count() to properly handle Unicode characters, not bytes
         let mut desc_lines = Vec::new();
         let mut current_line = String::new();
         for word in selected_desc.split_whitespace() {
-            if current_line.len() + word.len() + 1 > right_pane_width {
+            let word_char_count = word.chars().count();
+            let current_line_char_count = current_line.chars().count();
+            let space_needed = if current_line.is_empty() { 0 } else { 1 };
+            
+            // If adding this word would exceed the pane width, start a new line
+            if current_line_char_count + word_char_count + space_needed > right_pane_width {
                 desc_lines.push(current_line.clone());
                 current_line = word.to_string();
+                
+                // If the single word itself exceeds the width, truncate it
+                if word_char_count > right_pane_width {
+                    current_line = word.chars().take(right_pane_width).collect();
+                }
             } else {
                 if !current_line.is_empty() { current_line.push(' '); }
                 current_line.push_str(word);
@@ -344,10 +355,12 @@ fn main() -> anyhow::Result<()> {
                 let prefix = if selected { " ▶ " } else { "   " };
                 
                 // Truncate the flag if it is longer than our left pane
+                // Use .chars().count() to properly handle Unicode characters, not bytes
                 let mut flag_text = item.0.clone();
                 let max_flag_len = left_pane_width.saturating_sub(prefix.chars().count());
-                if flag_text.len() > max_flag_len {
-                    flag_text.truncate(max_flag_len);
+                let flag_char_count = flag_text.chars().count();
+                if flag_char_count > max_flag_len {
+                    flag_text = flag_text.chars().take(max_flag_len).collect();
                 }
                 
                 // Pad it out with exact spaces so the background color is a perfect rectangle
@@ -360,7 +373,11 @@ fn main() -> anyhow::Result<()> {
             // --- RIGHT PANE (The Description) ---
             let right_text = if row < desc_lines.len() {
                 let mut chunk = desc_lines[row].clone();
-                if chunk.len() > right_pane_width { chunk.truncate(right_pane_width); }
+                // Use .chars().count() to properly handle Unicode characters, not bytes
+                let chunk_char_count = chunk.chars().count();
+                if chunk_char_count > right_pane_width {
+                    chunk = chunk.chars().take(right_pane_width).collect();
+                }
                 format!(" {:<width$}", chunk, width = right_pane_width - 1)
             } else {
                 format!("{:<width$}", "", width = right_pane_width)
