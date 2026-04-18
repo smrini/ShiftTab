@@ -10,3 +10,4 @@ regex = "1.10.6"
 directories = "5.0"
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.1.2"
+strip-ansi-escapes = "0.2.1"

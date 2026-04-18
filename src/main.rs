@@ -125,7 +125,8 @@ fn main() -> anyhow::Result<()> {
     let mut final_selection: Option<String> = None;
 
     // 4. Scrape dynamic completions by running `<base_command> --help`!
-    let mut completions: Vec<String> = Vec::new();
+    // We now store a tuple of (Flag, Description)
+    let mut completions: Vec<(String, String)> = Vec::new();
     
     if !base_command.is_empty() {
         // --- NEW: Persistent Caching Layer ---
@@ -147,36 +148,109 @@ fn main() -> anyhow::Result<()> {
         if cache_path.exists() {
             // CACHE HIT: Read directly from the file!
             if let Ok(cached_data) = std::fs::read_to_string(&cache_path) {
-                completions = cached_data.lines().map(|s| s.to_string()).collect();
+                for line in cached_data.lines() {
+                    let parts: Vec<&str> = line.splitn(2, '\t').collect();
+                    if parts.len() == 2 {
+                        completions.push((parts[0].to_string(), parts[1].to_string()));
+                    } else if parts.len() == 1 {
+                        completions.push((parts[0].to_string(), String::new()));
+                    }
+                }
             }
         }
         
         // CACHE MISS (or cache was empty): We must run the expensive background system process
         if completions.is_empty() {
             if let Ok(output) = std::process::Command::new(base_command).arg("--help").output() {
-                let help_text = String::from_utf8_lossy(&output.stdout);
+                let help_text_raw = String::from_utf8_lossy(&output.stdout);
+                let stripped = strip_ansi_escapes::strip(&*help_text_raw);
+                let help_text = String::from_utf8_lossy(&stripped).into_owned();
                 
-                // This Regex looks for `-` followed by a single letter OR `--` followed by a word
-                let re = regex::Regex::new(r"(-[a-zA-Z0-9]|--[a-zA-Z0-9\-]+)").unwrap();
+                let mut current_flag: Option<String> = None;
+                let mut current_desc = String::new();
                 
-                for cap in re.captures_iter(&help_text) {
-                    let flag = cap[0].to_string();
-                    if !completions.contains(&flag) {
-                        completions.push(flag); // Save unique flags only
+                for line in help_text.lines() {
+                    let trimmed = line.trim_start();
+                    
+                    // Check if this line starts with a flag (short or long)
+                    if trimmed.starts_with('-') {
+                        // NEW FLAG FOUND! Save the previous one first.
+                        if let Some(f) = current_flag.take() {
+                            if !completions.iter().any(|(existing_f, _)| existing_f == &f) {
+                                completions.push((f, current_desc.trim().to_string()));
+                            }
+                        }
+                        
+                        // Now parse ALL the flags on THIS line and combine them intelligently!
+                        // Pattern: "-a, --all" or just "-a" or just "--all"
+                        let mut flags_on_line = Vec::new();
+                        let mut desc_start_pos = 0;
+                        
+                        // Tokenize by whitespace
+                        let tokens: Vec<&str> = line.split_whitespace().collect();
+                        
+                        // Collect all consecutive tokens that are flags (start with -)
+                        for (idx, token) in tokens.iter().enumerate() {
+                            // Strip trailing commas
+                            let clean = token.trim_end_matches(',');
+                            
+                            // Valid flag: starts with - and is either 2 chars (-X) or starts with --
+                            if clean.starts_with('-') && (clean.len() == 2 || clean.starts_with("--")) {
+                                flags_on_line.push(clean.to_string());
+                                desc_start_pos = idx + 1;
+                            } else {
+                                // Hit a non-flag token, stop collecting
+                                break;
+                            }
+                        }
+                        
+                        // Combine flags smartly: "-a (--all)" if multiple, or just the flag if single
+                        let combined_flag = if flags_on_line.len() > 1 {
+                            format!("{} ({})", flags_on_line[0], flags_on_line[1..].join(", "))
+                        } else if !flags_on_line.is_empty() {
+                            flags_on_line[0].clone()
+                        } else {
+                            continue; // No valid flags found on this line
+                        };
+                        
+                        current_flag = Some(combined_flag);
+                        
+                        // Extract description from remaining tokens on this line
+                        current_desc = if desc_start_pos < tokens.len() {
+                            tokens[desc_start_pos..].join(" ")
+                        } else {
+                            String::new()
+                        };
+                    } else if current_flag.is_some() {
+                        // This line continues the description of the current flag
+                        if !trimmed.is_empty() {
+                            if !current_desc.is_empty() {
+                                current_desc.push(' ');
+                            }
+                            current_desc.push_str(trimmed);
+                        }
+                    }
+                }
+                
+                // Don't forget to push the very last flag
+                if let Some(f) = current_flag {
+                    if !completions.iter().any(|(existing_f, _)| existing_f == &f) {
+                        completions.push((f, current_desc.trim().to_string()));
                     }
                 }
 
                 // Write the results to the cache file so we never have to run `--help` for this command again!
-                let cache_contents = completions.join("\n");
-                let _ = std::fs::write(cache_path, cache_contents);
+                // We use a Tab (\t) to cleanly separate the Flag from the Description
+                let cache_contents: Vec<String> = completions.iter().map(|(f, d)| format!("{}\t{}", f, d)).collect();
+                let _ = std::fs::write(cache_path, cache_contents.join("\n"));
             }
         }
     }
 
     // Fallback if the command didn't have a `--help` or we couldn't parse it
     if completions.is_empty() {
-        completions.push("--help".to_string());
-        completions.push("--version".to_string());
+        completions.push(("--help".to_string(), "Show help menu".to_string()));
+        completions.push(("--version".to_string(), "Show version info".to_string()));
     }
 
     // MAIN GAME/TUI LOOP
@@ -211,9 +285,9 @@ fn main() -> anyhow::Result<()> {
         write!(stderr, "--------------------\r\n")?;
 
         // Prepare the filtered list (Note: completions is now a Vec<String>)
-        let filtered: Vec<&String> = completions
+        let filtered: Vec<&(String, String)> = completions
             .iter()
-            .filter(|c| c.contains(&search_query))
+            .filter(|c| c.0.contains(&search_query))
             .collect();
 
         // Ensure our selection doesn't go out of bounds if the list shrinks
@@ -232,30 +306,95 @@ fn main() -> anyhow::Result<()> {
             start_idx = selected_index - max_visible_items + 1;
         }
         
-        // Take only our visible window's worth of items
-        let visible_items = filtered.iter().enumerate().skip(start_idx).take(max_visible_items);
+        // Take only our visible window's worth of items. Collect them to make math easier.
+        let visible_items: Vec<_> = filtered.iter().enumerate().skip(start_idx).take(max_visible_items).collect();
 
-        // Draw the list of completions
-        for (i, item) in visible_items {
-            // We use standard ANSI resets per-line so the background handles cleanly
-            if i == selected_index {
-                // Highlight the selected item (Mauve BG, Base FG)
-                execute!(
-                    stderr, 
-                    SetBackgroundColor(MACCHIATO_MAUVE),
-                    SetForegroundColor(MACCHIATO_BASE),
-                    Clear(ClearType::UntilNewLine) // Make sure the background color spans the full terminal width
-                )?;
-                write!(stderr, " ▶ {} \r\n", item)?;
+        // Let's figure out how wide the terminal is to build our 50/50 split!
+        let (cols, _) = crossterm::terminal::size().unwrap_or((80, 24));
+        let left_pane_width = (cols / 2).saturating_sub(3) as usize; // (Left) - (Padding)
+        let right_pane_width = (cols / 2).saturating_sub(2) as usize; // (Right) - (Padding)
+
+        // Get the description of the CURRENTLY SELECTED item so we can wrap it over multiple lines
+        let selected_desc = if let Some(sel) = filtered.get(selected_index) {
+            &sel.1
+        } else {
+            ""
+        };
+
+        // Basic Word Wrap logic: split the description text so it fits securely inside the right_pane_width
+        let mut desc_lines = Vec::new();
+        let mut current_line = String::new();
+        for word in selected_desc.split_whitespace() {
+            if current_line.len() + word.len() + 1 > right_pane_width {
+                desc_lines.push(current_line.clone());
+                current_line = word.to_string();
             } else {
-                // Normal item
-                execute!(
-                    stderr, 
-                    SetBackgroundColor(MACCHIATO_BASE),
-                    SetForegroundColor(MACCHIATO_TEXT),
-                    Clear(ClearType::UntilNewLine) // Make sure the background color spans the full terminal width
-                )?;
-                write!(stderr, "   {} \r\n", item)?;
+                if !current_line.is_empty() { current_line.push(' '); }
+                current_line.push_str(word);
+            }
+        }
+        if !current_line.is_empty() { desc_lines.push(current_line); }
+
+        // Draw the split UI! We always draw 10 rows to maintain the grid.
+        for row in 0..10 {
+            // --- LEFT PANE (The Flags) ---
+            let (is_selected, left_text) = if row < visible_items.len() {
+                let (i, item) = visible_items[row];
+                let selected = i == selected_index;
+                let prefix = if selected { " ▶ " } else { "   " };
+                
+                // Truncate the flag if it is longer than our left pane
+                let mut flag_text = item.0.clone();
+                let max_flag_len = left_pane_width.saturating_sub(prefix.chars().count());
+                if flag_text.len() > max_flag_len {
+                    flag_text.truncate(max_flag_len);
+                }
+                
+                // Pad it out with exact spaces so the background color is a perfect rectangle
+                (selected, format!("{}{:<width$}", prefix, flag_text, width = max_flag_len))
+            } else {
+                // If there are fewer than 10 items, just fill the rest of the left pane with empty space
+                (false, format!("{:<width$}", "", width = left_pane_width))
+            };
+
+            // --- RIGHT PANE (The Description) ---
+            let right_text = if row < desc_lines.len() {
+                let mut chunk = desc_lines[row].clone();
+                if chunk.len() > right_pane_width { chunk.truncate(right_pane_width); }
+                format!(" {:<width$}", chunk, width = right_pane_width - 1)
+            } else {
+                format!("{:<width$}", "", width = right_pane_width)
+            };
+
+            // --- RENDER THE ROW ---
+            if is_selected {
+                // Left Pane highlighted
+                execute!(stderr, SetBackgroundColor(MACCHIATO_MAUVE), SetForegroundColor(MACCHIATO_BASE))?;
+                write!(stderr, "{}", left_text)?;
+                
+                // The middle separator line
+                execute!(stderr, SetBackgroundColor(MACCHIATO_BASE), SetForegroundColor(MACCHIATO_SURFACE1))?;
+                write!(stderr, " │")?;
+                
+                // Right Pane standard colors
+                execute!(stderr, SetForegroundColor(MACCHIATO_TEXT))?;
+                write!(stderr, "{}", right_text)?;
+                execute!(stderr, Clear(ClearType::UntilNewLine))?;
+                write!(stderr, "\r\n")?;
+            } else {
+                // Standard row colors across the board
+                execute!(stderr, SetBackgroundColor(MACCHIATO_BASE), SetForegroundColor(MACCHIATO_TEXT))?;
+                write!(stderr, "{}", left_text)?;
+                
+                // The middle separator line
+                execute!(stderr, SetForegroundColor(MACCHIATO_SURFACE1))?;
+                write!(stderr, " │")?;
+                
+                // Right Pane standard colors
+                execute!(stderr, SetForegroundColor(MACCHIATO_TEXT))?;
+                write!(stderr, "{}", right_text)?;
+                execute!(stderr, Clear(ClearType::UntilNewLine))?;
+                write!(stderr, "\r\n")?;
             }
         }
         
@@ -275,7 +414,7 @@ fn main() -> anyhow::Result<()> {
                 // Confirm selection
                 KeyCode::Enter => {
                     if let Some(selected_item) = filtered.get(selected_index) {
-                        final_selection = Some(selected_item.to_string());
+                        final_selection = Some(selected_item.0.to_string());
                     }
                     break;
                 }
@@ -312,8 +451,16 @@ fn main() -> anyhow::Result<()> {
     if config.mode == Mode::Extended {
         execute!(stderr, LeaveAlternateScreen)?;
     } else {
-        // Restore cursor to original line, move UP 1 line to clear the padding, then clear downwards
-        execute!(stderr, RestorePosition, MoveUp(1), ResetColor, Clear(ClearType::FromCursorDown))?;
+        // Restore cursor up 1 line to safely clear the padding layer, then move UP 1 more line to return EXACTLY
+        // to the user's original command prompt row before handing control back to Zsh!
+        execute!(
+            stderr, 
+            RestorePosition, 
+            MoveUp(1), 
+            ResetColor, 
+            Clear(ClearType::FromCursorDown),
+            MoveUp(1)
+        )?;
     }
     execute!(stderr, Show)?;
     disable_raw_mode()?;
@@ -322,7 +469,9 @@ fn main() -> anyhow::Result<()> {
     if let Some(selection) = final_selection {
         let mut new_buffer = user_buffer.to_string();
 
-        if is_typing_partial_word {
+        let is_typing_partial_flag = is_typing_partial_word && tokens.len() > base_cmd_index + 1;
+
+        if is_typing_partial_flag {
             // Find the index of the last space they typed before their partial word
             if let Some(last_space_idx) = new_buffer.rfind(char::is_whitespace) {
                 // Slice off the partial word so we can inject the cleanly selected item on top
@@ -332,7 +481,7 @@ fn main() -> anyhow::Result<()> {
                 new_buffer.clear();
             }
         } else {
-            // If they weren't typing a partial word (e.g. "ls "), we need to add a space 
+            // If they weren't typing a partial flag (e.g. "ls" or "ls "), we need to add a space 
             // ourselves so the flag doesn't stick to the last argument.
             if !new_buffer.is_empty() && !new_buffer.ends_with(char::is_whitespace) {
                 new_buffer.push(' ');
@@ -340,7 +489,8 @@ fn main() -> anyhow::Result<()> {
         }
         
         // Print the assembled, finalized buffer to stdout!
-        print!("{}{}", new_buffer, selection);
+        // We append a trailing space so the user can immediately type the next argument!
+        print!("{}{} ", new_buffer, selection);
     }
     
     Ok(())
