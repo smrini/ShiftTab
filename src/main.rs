@@ -2,7 +2,7 @@ use crossterm::event::{read, Event, KeyCode};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use crossterm::cursor::{Hide, MoveTo, Show};
+use crossterm::cursor::{Hide, MoveTo, MoveUp, RestorePosition, SavePosition, Show};
 use crossterm::style::{Color, ResetColor, SetBackgroundColor, SetForegroundColor};
 use crossterm::execute;
 use serde::Deserialize;
@@ -62,6 +62,15 @@ fn main() -> anyhow::Result<()> {
     // (Compact Mode will just print below the current cursor)
     if config.mode == Mode::Extended {
         execute!(stderr, EnterAlternateScreen)?;
+    } else {
+        // Reserve 13 lines for the UI (1 for padding + 2 for header + 10 max items)
+        // We print newlines to make sure the terminal scrolls if we're at the very bottom
+        for _ in 0..13 {
+            write!(stderr, "\r\n")?;
+        }
+        // We moved down 13 lines. Now we move up 11 lines, which parks our cursor 
+        // exactly 2 lines below the user's prompt. This naturally creates an empty padding line!
+        execute!(stderr, MoveUp(11), SavePosition)?;
     }
     execute!(stderr, Hide)?;
 
@@ -173,21 +182,32 @@ fn main() -> anyhow::Result<()> {
     // MAIN GAME/TUI LOOP
     loop {
         // 1. The Render Phase
-        execute!(
-            stderr, 
-            SetBackgroundColor(MACCHIATO_BASE),
-            SetForegroundColor(MACCHIATO_TEXT),
-            Clear(ClearType::All), 
-            MoveTo(0, 0)
-        )?;
+        if config.mode == Mode::Extended {
+            execute!(
+                stderr, 
+                SetBackgroundColor(MACCHIATO_BASE),
+                SetForegroundColor(MACCHIATO_TEXT),
+                Clear(ClearType::All), 
+                MoveTo(0, 0)
+            )?;
+        } else {
+            execute!(
+                stderr, 
+                RestorePosition, // Go back to the top of our 12-line reserved block
+                ResetColor,      // RESET COLOR SO CLEAR DOESN'T BLEED TO THE BOTTOM OF THE TERMINAL
+                Clear(ClearType::FromCursorDown),
+                SetBackgroundColor(MACCHIATO_BASE),
+                SetForegroundColor(MACCHIATO_TEXT)
+            )?;
+        }
         
         // Draw the Search Box (styled!)
         execute!(stderr, SetForegroundColor(MACCHIATO_MAUVE))?;
         write!(stderr, "> ")?;
-        execute!(stderr, SetForegroundColor(MACCHIATO_TEXT))?;
+        execute!(stderr, SetForegroundColor(MACCHIATO_TEXT), Clear(ClearType::UntilNewLine))?;
         write!(stderr, "{}\r\n", search_query)?;
         
-        execute!(stderr, SetForegroundColor(MACCHIATO_SURFACE1))?;
+        execute!(stderr, SetForegroundColor(MACCHIATO_SURFACE1), Clear(ClearType::UntilNewLine))?;
         write!(stderr, "--------------------\r\n")?;
 
         // Prepare the filtered list (Note: completions is now a Vec<String>)
@@ -203,15 +223,28 @@ fn main() -> anyhow::Result<()> {
             selected_index = filtered.len() - 1;
         }
 
+        // Setup pagination/scrolling for our list
+        let max_visible_items = 10;
+        let mut start_idx = 0;
+        
+        // If we are currently selecting an item beyond our window, scroll the window!
+        if selected_index >= max_visible_items {
+            start_idx = selected_index - max_visible_items + 1;
+        }
+        
+        // Take only our visible window's worth of items
+        let visible_items = filtered.iter().enumerate().skip(start_idx).take(max_visible_items);
+
         // Draw the list of completions
-        for (i, item) in filtered.iter().enumerate() {
+        for (i, item) in visible_items {
             // We use standard ANSI resets per-line so the background handles cleanly
             if i == selected_index {
                 // Highlight the selected item (Mauve BG, Base FG)
                 execute!(
                     stderr, 
                     SetBackgroundColor(MACCHIATO_MAUVE),
-                    SetForegroundColor(MACCHIATO_BASE)
+                    SetForegroundColor(MACCHIATO_BASE),
+                    Clear(ClearType::UntilNewLine) // Make sure the background color spans the full terminal width
                 )?;
                 write!(stderr, " ▶ {} \r\n", item)?;
             } else {
@@ -219,7 +252,8 @@ fn main() -> anyhow::Result<()> {
                 execute!(
                     stderr, 
                     SetBackgroundColor(MACCHIATO_BASE),
-                    SetForegroundColor(MACCHIATO_TEXT)
+                    SetForegroundColor(MACCHIATO_TEXT),
+                    Clear(ClearType::UntilNewLine) // Make sure the background color spans the full terminal width
                 )?;
                 write!(stderr, "   {} \r\n", item)?;
             }
@@ -278,8 +312,8 @@ fn main() -> anyhow::Result<()> {
     if config.mode == Mode::Extended {
         execute!(stderr, LeaveAlternateScreen)?;
     } else {
-        // Just clear the screen downwards for compact mode
-        execute!(stderr, ResetColor, Clear(ClearType::FromCursorDown))?;
+        // Restore cursor to original line, move UP 1 line to clear the padding, then clear downwards
+        execute!(stderr, RestorePosition, MoveUp(1), ResetColor, Clear(ClearType::FromCursorDown))?;
     }
     execute!(stderr, Show)?;
     disable_raw_mode()?;
