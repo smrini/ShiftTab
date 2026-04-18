@@ -5,6 +5,7 @@ use crossterm::terminal::{
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::style::{Color, ResetColor, SetBackgroundColor, SetForegroundColor};
 use crossterm::execute;
+use serde::Deserialize;
 use std::io::{stderr, Write};
 
 // --- NEW: Catppuccin Mocha Color Palette ---
@@ -13,11 +14,56 @@ const MACCHIATO_TEXT: Color = Color::Rgb { r: 202, g: 211, b: 245 };
 const MACCHIATO_MAUVE: Color = Color::Rgb { r: 198, g: 160, b: 246 };
 const MACCHIATO_SURFACE1: Color = Color::Rgb { r: 73, g: 77, b: 100 };
 
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum Mode {
+    Compact,
+    Extended,
+}
+
+impl Default for Mode {
+    fn default() -> Self {
+        Mode::Extended
+    }
+}
+
+#[derive(Deserialize, Default, Debug)]
+#[serde(default)]
+struct Config {
+    mode: Mode,
+}
+
 fn main() -> anyhow::Result<()> {
+    // --- Step 14: Load Configuration File ---
+    let mut config = Config::default();
+    if let Some(proj_dirs) = directories::ProjectDirs::from("", "", "shifttab") {
+        let config_dir = proj_dirs.config_dir();
+        let _ = std::fs::create_dir_all(config_dir);
+        let config_file = config_dir.join("config.toml");
+
+        if config_file.exists() {
+            if let Ok(contents) = std::fs::read_to_string(&config_file) {
+                if let Ok(parsed) = toml::from_str(&contents) {
+                    config = parsed;
+                }
+            }
+        } else {
+            // Write a default config if none exists to show the user it's there
+            let default_toml = "mode = \"extended\"\n";
+            let _ = std::fs::write(&config_file, default_toml);
+        }
+    }
+
     enable_raw_mode()?;
 
     let mut stderr = stderr();
-    execute!(stderr, EnterAlternateScreen, Hide)?;
+    
+    // Only enter the Alternate Screen if we are in Extended Mode.
+    // (Compact Mode will just print below the current cursor)
+    if config.mode == Mode::Extended {
+        execute!(stderr, EnterAlternateScreen)?;
+    }
+    execute!(stderr, Hide)?;
 
     // --- NEW: Context Parsing ---
     // 1. Read command line arguments passed from Zsh
@@ -229,7 +275,13 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Teardown
-    execute!(stderr, Show, LeaveAlternateScreen)?;
+    if config.mode == Mode::Extended {
+        execute!(stderr, LeaveAlternateScreen)?;
+    } else {
+        // Just clear the screen downwards for compact mode
+        execute!(stderr, ResetColor, Clear(ClearType::FromCursorDown))?;
+    }
+    execute!(stderr, Show)?;
     disable_raw_mode()?;
 
     // Output the completed user buffer back to the shell!
