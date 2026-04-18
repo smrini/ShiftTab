@@ -467,12 +467,12 @@ vim_search = "/"               # Enter search mode
         }
 
         // Setup pagination/scrolling for our list
-        // In extended mode, use full terminal height minus space for top padding, search box, separator, and status bar
+        // In extended mode, use full terminal height minus space for top padding, search box, separator, help bar, and status bar
         // In compact mode, limit to 10 rows
         let (_, rows) = crossterm::terminal::size().unwrap_or((80, 24));
         let max_visible_items = if config.mode == Mode::Extended {
-            // Reserve 1 row for top padding + 2 rows for search box and separator + 1 row for status bar
-            (rows as usize).saturating_sub(4).max(3)  // At least 3 rows
+            // Reserve 1 row for top padding + 2 rows for search box and separator + 1 row for help bar + 1 row for status bar
+            (rows as usize).saturating_sub(5).max(3)  // At least 3 rows
         } else {
             10  // Compact mode keeps 10 rows
         };
@@ -617,6 +617,70 @@ vim_search = "/"               # Enter search mode
                 execute!(stderr, Clear(ClearType::UntilNewLine))?;
                 write!(stderr, "\r\n")?;
             }
+        }
+        
+        // --- HELP BAR (Extended Mode Only) ---
+        if config.mode == Mode::Extended {
+            // Build dynamic help text based on config
+            let nav_keys = if config.keys.modifier == "none" {
+                format!("[↑↓/{}{}]", config.keys.up, config.keys.down)
+            } else {
+                let mod_str = if config.keys.modifier == "ctrl" { "^" } else { "Alt+" };
+                format!("[↑↓/{}{}/{}{}]", config.keys.up, config.keys.down, mod_str, config.keys.up)
+            };
+            
+            // Build the actions part dynamically from config
+            let help_text = format!(
+                "{} navigate | [{}] search | [Space] toggle | [Ctrl+Space] multi | [{}{}] jump | [Enter] select | [Esc] exit",
+                nav_keys,
+                config.keys.vim_search,
+                config.keys.vim_top,
+                config.keys.vim_bottom
+            );
+            
+            // Get terminal width
+            let (cols, _) = crossterm::terminal::size().unwrap_or((80, 24));
+            let max_text_width = (cols as usize).saturating_sub(4); // Leave 2 char margin on each side
+            
+            // Word-wrap the help text to fit within max_text_width
+            let mut help_lines = Vec::new();
+            let mut current_line = String::new();
+            
+            for word in help_text.split_whitespace() {
+                let word_len = word.chars().count();
+                let current_len = current_line.chars().count();
+                let space_needed = if current_line.is_empty() { 0 } else { 1 };
+                
+                if current_len + word_len + space_needed > max_text_width && !current_line.is_empty() {
+                    help_lines.push(current_line.clone());
+                    current_line = word.to_string();
+                } else {
+                    if !current_line.is_empty() {
+                        current_line.push(' ');
+                    }
+                    current_line.push_str(word);
+                }
+            }
+            if !current_line.is_empty() {
+                help_lines.push(current_line);
+            }
+            
+            // Render each line centered
+            execute!(stderr, SetForegroundColor(color_border), Clear(ClearType::UntilNewLine))?;
+            for (idx, line) in help_lines.iter().enumerate() {
+                let text_width = line.chars().count();
+                let padding = if text_width < cols as usize {
+                    (cols as usize - text_width) / 2
+                } else {
+                    0
+                };
+                write!(stderr, "{}{}", " ".repeat(padding), line)?;
+                execute!(stderr, Clear(ClearType::UntilNewLine))?;
+                if idx < help_lines.len() - 1 {
+                    write!(stderr, "\r\n")?;
+                }
+            }
+            write!(stderr, "\r\n")?;
         }
         
         // --- STATUS BAR ---
