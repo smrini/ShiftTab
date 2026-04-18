@@ -103,6 +103,40 @@ struct Config {
     keys: KeyConfig,
 }
 
+// --- CONFIG VALIDATION ---
+fn validate_config(config: &Config) -> anyhow::Result<()> {
+    // Validate modifier key
+    match config.keys.modifier.as_str() {
+        "ctrl" | "alt" | "none" => {},
+        _ => return Err(anyhow::anyhow!(
+            "Invalid modifier key '{}'. Must be one of: 'ctrl', 'alt', 'none'\n\
+             Check ~/.config/shifttab/config.toml [keys] section",
+            config.keys.modifier
+        )),
+    }
+    
+    // Validate mode
+    if config.mode != Mode::Extended && config.mode != Mode::Compact {
+        return Err(anyhow::anyhow!(
+            "Invalid mode. Must be 'extended' or 'compact'\n\
+             Check ~/.config/shifttab/config.toml mode setting"
+        ));
+    }
+    
+    // Validate that key bindings aren't empty
+    if config.keys.up.is_empty() {
+        return Err(anyhow::anyhow!("Invalid config: 'up' key binding cannot be empty"));
+    }
+    if config.keys.down.is_empty() {
+        return Err(anyhow::anyhow!("Invalid config: 'down' key binding cannot be empty"));
+    }
+    if config.keys.vim_search.is_empty() {
+        return Err(anyhow::anyhow!("Invalid config: 'vim_search' key binding cannot be empty"));
+    }
+    
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
     // Default configuration content
     const DEFAULT_CONFIG: &str = r#"# ShiftTab Configuration File
@@ -152,9 +186,17 @@ vim_search = "/"               # Enter search mode
                 // If file is empty, populate it with defaults
                 if contents.trim().is_empty() {
                     let _ = std::fs::write(&config_file, DEFAULT_CONFIG);
-                } else if let Ok(parsed) = toml::from_str(&contents) {
-                    // File has content, parse it
-                    config = parsed;
+                } else {
+                    match toml::from_str::<Config>(&contents) {
+                        Ok(parsed) => config = parsed,
+                        Err(e) => {
+                            return Err(anyhow::anyhow!(
+                                "Failed to parse config file at {}:\n{}\n\nConfig file has invalid TOML syntax",
+                                config_file.display(),
+                                e
+                            ));
+                        }
+                    }
                 }
             }
         } else {
@@ -162,6 +204,9 @@ vim_search = "/"               # Enter search mode
             let _ = std::fs::write(&config_file, DEFAULT_CONFIG);
         }
     }
+
+    // Validate the loaded config
+    validate_config(&config)?;
 
     enable_raw_mode()?;
 
@@ -230,6 +275,9 @@ vim_search = "/"               # Enter search mode
 
     // Keep track of which item is currently highlighted
     let mut selected_index: usize = 0;
+    // Multi-select mode: track multiple selected items
+    let mut selected_items: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut multi_select_mode = false;
     // Store out final choice so we can use it after the UI closes
     let mut final_selection: Option<String> = None;
 
@@ -493,7 +541,22 @@ vim_search = "/"               # Enter search mode
             let (is_selected, left_text) = if row < visible_items.len() {
                 let (i, item) = visible_items[row];
                 let selected = i == selected_index;
-                let prefix = if selected { " ▶ " } else { "   " };
+                let is_multi_selected = selected_items.contains(&i);
+                
+                // Build prefix based on mode and selection state
+                let prefix = if multi_select_mode {
+                    // In multi-select mode, show checkbox
+                    if is_multi_selected {
+                        " ✓ " // Checkmark for selected
+                    } else {
+                        " ☐ " // Empty box for unselected
+                    }
+                } else if selected {
+                    // Single select mode, show arrow for selected
+                    " ▶ "
+                } else {
+                    "   "
+                };
                 
                 // Truncate the flag if it is longer than our left pane
                 // Use .chars().count() to properly handle Unicode characters, not bytes
@@ -559,7 +622,17 @@ vim_search = "/"               # Enter search mode
         // --- STATUS BAR ---
         if !filtered.is_empty() {
             let (cols, _) = crossterm::terminal::size().unwrap_or((80, 24));
-            let status_text = format!("{}/{}", selected_index + 1, filtered.len());
+            
+            // Build status text with multi-select info
+            let status_text = if multi_select_mode {
+                if selected_items.is_empty() {
+                    format!("MULTI | {}/{}", selected_index + 1, filtered.len())
+                } else {
+                    format!("MULTI ({}) | {}/{}", selected_items.len(), selected_index + 1, filtered.len())
+                }
+            } else {
+                format!("{}/{}", selected_index + 1, filtered.len())
+            };
             
             if config.mode == Mode::Extended {
                 // Build scrollbar for extended mode (spanning full width)
@@ -625,10 +698,48 @@ vim_search = "/"               # Enter search mode
 
                 // Enter always selects (as separate key, not as char)
                 KeyCode::Enter => {
-                    if let Some(selected_item) = filtered.get(selected_index) {
+                    if multi_select_mode && !selected_items.is_empty() {
+                        // Multi-select mode: combine all selected items
+                        let mut selections = vec![];
+                        let mut indices: Vec<_> = selected_items.iter().copied().collect();
+                        indices.sort();
+                        for idx in indices {
+                            if let Some((flag, _)) = filtered.get(idx) {
+                                selections.push(flag.clone());
+                            }
+                        }
+                        final_selection = Some(selections.join(" "));
+                    } else if let Some(selected_item) = filtered.get(selected_index) {
+                        // Single-select mode: just select current item
                         final_selection = Some(selected_item.0.to_string());
                     }
                     break;
+                }
+
+                // Space: toggle multi-select on current item (only in multi-select mode), or Ctrl+Space to enter/exit mode
+                KeyCode::Char(' ') => {
+                    // Check for Ctrl+Space first
+                    if key_event.modifiers.contains(KeyModifiers::CONTROL) {
+                        multi_select_mode = !multi_select_mode;
+                        // When entering multi-select mode, add current item to selection
+                        if multi_select_mode {
+                            selected_items.insert(selected_index);
+                        } else {
+                            // When exiting multi-select mode, clear selections
+                            selected_items.clear();
+                        }
+                    } else if multi_select_mode {
+                        // Space without Ctrl: toggle current item in multi-select mode
+                        if selected_items.contains(&selected_index) {
+                            selected_items.remove(&selected_index);
+                        } else {
+                            selected_items.insert(selected_index);
+                        }
+                    } else {
+                        // Not in multi-select mode, space just appends to search
+                        search_query.push(' ');
+                    }
+                    continue;
                 }
 
                 // Context-aware character input with modifier support
@@ -743,9 +854,16 @@ vim_search = "/"               # Enter search mode
             }
         }
         
-        // Extract just the base flag, removing the description in parentheses
-        // E.g., "-a (--all)" becomes "-a"
-        let output_flag = selection.split_whitespace().next().unwrap_or(&selection);
+        // Extract just the base flags, removing descriptions in parentheses
+        // E.g., "-a (--all)" becomes "-a", and "-a (--all) -b (--brief)" becomes "-a -b"
+        let cleaned_flags = selection
+            .split_whitespace()
+            .filter(|part| !part.starts_with('('))  // Skip parenthetical descriptions
+            .collect::<Vec<_>>()
+            .join(" ");
+        
+        // Use cleaned flags if we got them, otherwise use original selection
+        let output_flag = if cleaned_flags.is_empty() { &selection } else { &cleaned_flags };
         
         // Print the assembled, finalized buffer to stdout!
         // We append a trailing space so the user can immediately type the next argument!
