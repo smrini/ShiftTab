@@ -143,7 +143,7 @@ fn main() -> anyhow::Result<()> {
 # Location: ~/.config/shifttab/config.toml
 
 # Display mode: "extended" (full-screen) or "compact" (inline)
-mode = "compact"
+mode = "extended"
 
 # Color customization (RGB values 0-255)
 # Default theme: Catppuccin Mocha
@@ -428,11 +428,10 @@ vim_search = "/"               # Enter search mode
                 stderr, 
                 SetBackgroundColor(color_base),
                 SetForegroundColor(color_text),
-                Clear(ClearType::All), 
                 MoveTo(0, 0)
             )?;
-            // Add top padding (1 blank line)
-            execute!(stderr, SetBackgroundColor(color_base))?;
+            // clear the first line and then let the rest of the loop overwrite everything else.
+            execute!(stderr, Clear(ClearType::UntilNewLine))?;
             write!(stderr, "\r\n")?;
         } else {
             execute!(
