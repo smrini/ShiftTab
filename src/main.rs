@@ -19,22 +19,52 @@ fn main() -> anyhow::Result<()> {
     let mut stderr = stderr();
     execute!(stderr, EnterAlternateScreen, Hide)?;
 
-    // --- NEW: Application State ---
-    // A string to hold whatever the user types
+    // --- NEW: Context Parsing ---
+    // 1. Read command line arguments passed from Zsh
+    let args: Vec<String> = std::env::args().collect();
+    
+    // 2. The first argument (index 1) is whatever the user has typed so far (the LBUFFER)
+    let user_buffer = args.get(1).map(String::as_str).unwrap_or("");
+    
+    // 3. Find the first word they typed (the base command like 'git' or 'ls')
+    let base_command = user_buffer.split_whitespace().next().unwrap_or("");
+
+    // --- Application State ---
+    // A string to hold whatever the user types inside our search box
     let mut search_query = String::new();
     // Keep track of which item is currently highlighted
     let mut selected_index: usize = 0;
     // Store out final choice so we can use it after the UI closes
     let mut final_selection: Option<String> = None;
 
-    // A hardcoded mock list of command flags/options
-    let completions = vec![
-        "--all",
-        "--force",
-        "--help",
-        "--quiet",
-        "--verbose",
-    ];
+    // 4. Provide dynamic completions based on what they are trying to run!
+    let completions = match base_command {
+        "git" => vec![
+            "commit",
+            "push",
+            "pull",
+            "status",
+            "checkout",
+        ],
+        "ls" => vec![
+            "-l",
+            "-a",
+            "-la",
+            "--color",
+            "--human-readable",
+        ],
+        "cargo" => vec![
+            "build",
+            "run",
+            "test",
+            "check",
+            "publish",
+        ],
+        _ => vec![ // Fallback for unknown commands
+            "--help",
+            "--version",
+        ],
+    };
 
     // MAIN GAME/TUI LOOP
     loop {

@@ -1,9 +1,9 @@
 # shifttab.zsh - The bridge between ZLE (Zsh Line Editor) and our Rust binary
 
 function _shifttab_widget() {
-    # 1. Run the Rust binary and capture its pure text output
-    # We specify the full path to exactly where `cargo build` puts the executable
-    local selected_flag=$(/home/dev/ShiftTab/target/debug/ShiftTab </dev/tty)
+    # 1. Run the Rust binary and pass what the user has typed ($LBUFFER) as the first argument
+    # We still capture its pure text output
+    local selected_flag=$(/home/dev/ShiftTab/target/debug/ShiftTab "$LBUFFER" </dev/tty)
 
     # 2. If the user picked something (didn't just press Escape),
     # insert a space and the new text into the current line buffer!
