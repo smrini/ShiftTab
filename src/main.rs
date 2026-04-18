@@ -3,8 +3,15 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use crossterm::cursor::{Hide, MoveTo, Show};
+use crossterm::style::{Color, ResetColor, SetBackgroundColor, SetForegroundColor};
 use crossterm::execute;
 use std::io::{stdout, Write};
+
+// --- NEW: Catppuccin Mocha Color Palette ---
+const MACCHIATO_BASE: Color = Color::Rgb { r: 36, g: 39, b: 58 };
+const MACCHIATO_TEXT: Color = Color::Rgb { r: 202, g: 211, b: 245 };
+const MACCHIATO_MAUVE: Color = Color::Rgb { r: 198, g: 160, b: 246 };
+const MACCHIATO_SURFACE1: Color = Color::Rgb { r: 73, g: 77, b: 100 };
 
 fn main() -> anyhow::Result<()> {
     enable_raw_mode()?;
@@ -32,10 +39,21 @@ fn main() -> anyhow::Result<()> {
     // MAIN GAME/TUI LOOP
     loop {
         // 1. The Render Phase
-        execute!(stdout, Clear(ClearType::All), MoveTo(0, 0))?;
+        execute!(
+            stdout, 
+            SetBackgroundColor(MACCHIATO_BASE),
+            SetForegroundColor(MACCHIATO_TEXT),
+            Clear(ClearType::All), 
+            MoveTo(0, 0)
+        )?;
         
-        // Draw the Search Box
-        println!("> {}\r", search_query);
+        // Draw the Search Box (styled!)
+        execute!(stdout, SetForegroundColor(MACCHIATO_MAUVE))?;
+        print!("> ");
+        execute!(stdout, SetForegroundColor(MACCHIATO_TEXT))?;
+        println!("{}\r", search_query);
+        
+        execute!(stdout, SetForegroundColor(MACCHIATO_SURFACE1))?;
         println!("--------------------\r");
 
         // Prepare the filtered list
@@ -53,14 +71,28 @@ fn main() -> anyhow::Result<()> {
 
         // Draw the list of completions
         for (i, item) in filtered.iter().enumerate() {
+            // We use standard ANSI resets per-line so the background handles cleanly
             if i == selected_index {
-                // Highlight the selected item
-                println!("▶ [{}]\r", item);
+                // Highlight the selected item (Mauve BG, Base FG)
+                execute!(
+                    stdout, 
+                    SetBackgroundColor(MACCHIATO_MAUVE),
+                    SetForegroundColor(MACCHIATO_BASE)
+                )?;
+                println!(" ▶ {} \r", item);
             } else {
-                println!("  {}\r", item);
+                // Normal item
+                execute!(
+                    stdout, 
+                    SetBackgroundColor(MACCHIATO_BASE),
+                    SetForegroundColor(MACCHIATO_TEXT)
+                )?;
+                println!("   {} \r", item);
             }
         }
         
+        // Reset colors before moving on, to make sure nothing weird happens with trailing artifacts
+        execute!(stdout, ResetColor)?;
         stdout.flush()?;
 
         // 2. The Input Phase
