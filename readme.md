@@ -61,7 +61,23 @@ The fastest way to install on any standard Linux/macOS system. This script dynam
 curl -sSL https://raw.githubusercontent.com/smrini/ShiftTab/master/install.sh | bash
 ```
 
-### 2. Standalone Binary (Manual)
+### 2. Auto-Bootstrapping `.zshrc` Snippet
+Add this highly convenient, self-installing snippet directly anywhere inside your `~/.zshrc`. Every time a new shell session opens, it will verify ShiftTab is installed (downloading it if it's missing) and cleanly initialize the plugin:
+
+```zsh
+# ShiftTab TUI Autocomplete Bootstrap
+if ! command -v ShiftTab >/dev/null 2>&1; then
+    echo "ShiftTab not found. Installing..."
+    curl -sSL https://raw.githubusercontent.com/smrini/ShiftTab/master/install.sh | bash
+    
+    # Reload local PATH overrides for immediate use
+    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/bin:$PATH"
+fi
+
+eval "$(ShiftTab --init zsh)"
+```
+
+### 3. Standalone Binary (Manual)
 For users who prefer to manage their own binaries or install via Cargo.
 
 Clone this repo, then build and install with cargo.
@@ -134,6 +150,32 @@ modifier = "ctrl"              # Modifier for navigation: "ctrl", "alt", or "non
 # Selection: Enter always selects
 # Exit: Escape always exits
 ```
+
+---
+
+## Uninstallation
+
+If you need to remove ShiftTab, the process depends on how you installed it.
+
+### Via PKGBUILD (Arch Linux)
+Because the package is tracked by `pacman`, you can completely remove the binary and plugin by running:
+```bash
+sudo pacman -Rns shifttab-git
+```
+*(Be sure to also open your `~/.zshrc` and manually delete the `eval "$(ShiftTab --init zsh)"` or `source` line you added).*
+
+### Via the Installation Script
+The `install.sh` script places everything inside your local user directory. To uninstall it, run the built-in uninstall script, or manually remove its directories:
+
+```bash
+# Option 1: Run the uninstaller script
+curl -sSL https://raw.githubusercontent.com/smrini/ShiftTab/master/uninstall.sh | bash
+
+# Option 2: Manually remove the files
+rm -f ~/.local/bin/ShiftTab ~/.cargo/bin/ShiftTab ~/bin/ShiftTab
+rm -rf ~/.config/shifttab ~/.cache/shifttab
+```
+*Note: You will also need to open your `~/.zshrc` and manually remove the lines referencing `shifttab.zsh` and the `PATH` export if it was automatically injected.*
 
 ---
 
