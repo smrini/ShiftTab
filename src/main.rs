@@ -352,6 +352,16 @@ modifier = "ctrl"              # Modifier for navigation: "ctrl", "alt", or "non
         
         // CACHE MISS (or cache was empty): We must run the expensive background system process
         if completions.is_empty() {
+            // Draw a temporary loading indicator
+            if config.mode == Mode::Extended {
+                let _ = execute!(stderr, MoveTo(0, 0), Clear(ClearType::All));
+                let _ = write!(stderr, "\r\n  Fetching manual pages for '{}'... Please wait.\r\n", base_command);
+            } else {
+                let _ = execute!(stderr, RestorePosition, Clear(ClearType::FromCursorDown));
+                let _ = write!(stderr, "\r\n  Fetching manual pages for '{}'... Please wait.\r\n", base_command);
+            }
+            let _ = stderr.flush();
+
             let mut help_text_raw = String::new();
             
             if let Ok(output) = std::process::Command::new(base_command).arg("--help").output() {
