@@ -11,3 +11,10 @@ directories = "5.0"
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.1.2"
 strip-ansi-escapes = "0.2.1"
+
+[profile.release]
+opt-level = "z"       # Optimize for size
+lto = true            # Enable Link Time Optimization
+codegen-units = 1     # Maximize size reduction and speed
+panic = "abort"       # Remove panic unwinding logic to save space
+strip = true          # Automatically strip symbols from the binary
