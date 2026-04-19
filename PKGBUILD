@@ -1,16 +1,16 @@
-# Maintainer: Your Name <you@example.com>
+# Maintainer: Said Mrini <smrini@example.com>
 pkgname=shifttab-git
 pkgver=0.1.0
 pkgrel=1
 pkgdesc="A Zsh TUI autocomplete tool for dynamically finding flags and arguments directly from man pages/--help outputs."
 arch=('x86_64' 'i686' 'aarch64')
-url="https://github.com/username/ShiftTab"
+url="https://github.com/smrini/ShiftTab"
 license=('MIT')
 depends=('zsh')
 makedepends=('cargo' 'git')
 provides=("shifttab")
 conflicts=("shifttab")
-source=("git+https://github.com/username/ShiftTab.git")
+source=("git+https://github.com/smrini/ShiftTab.git")
 sha256sums=('SKIP')
 
 build() {

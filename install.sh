@@ -5,7 +5,7 @@ set -e
 # This downloads the pre-compiled binary, verifies it, downloads the Zsh wrapper, and installs it.
 
 VERSION="v0.1.0"
-REPO="username/ShiftTab"
+REPO="smrini/ShiftTab"
 BASE_URL="https://github.com/$REPO/releases/download/$VERSION"
 
 # (Note: These URLs will need to match your actual GitHub Releases!)
@@ -22,7 +22,7 @@ SHA_URL="$BASE_URL/$BIN_NAME.sha256"
 
 INSTALL_DIR="$HOME/.local/bin"
 CONFIG_DIR="$HOME/.config/shifttab"
-ZSH_PLUGIN_URL="https://raw.githubusercontent.com/$REPO/main/shifttab.zsh"
+ZSH_PLUGIN_URL="https://raw.githubusercontent.com/$REPO/master/shifttab.zsh"
 
 echo "=> Preparing directories..."
 mkdir -p "$INSTALL_DIR"
@@ -60,10 +60,10 @@ fi
 # Make sure .local/bin is in PATH for future sessions
 if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
     echo ""
-    echo "⚠️  WARNING: $HOME/.local/bin is not in your PATH."
+    echo "WARNING: $HOME/.local/bin is not in your PATH."
     echo "Please add 'export PATH=\"\$HOME/.local/bin:\$PATH\"' to your ~/.zshrc"
 fi
 
 echo ""
-echo "=> 🎉 Installation Complete! Please restart your terminal or run:"
+echo "=> Installation Complete! Please restart your terminal or run:"
 echo "   source ~/.zshrc"
