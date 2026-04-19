@@ -30,6 +30,8 @@ package() {
     install -Dm644 "shifttab.zsh" "$pkgdir/usr/share/zsh/plugins/shifttab/shifttab.zsh"
     
     # (Optional) Install a snippet explaining how to source it
-    echo "# To use ShiftTab, add the following to your ~/.zshrc:" > "$pkgdir/usr/share/zsh/plugins/shifttab/README.md"
-    echo "source /usr/share/zsh/plugins/shifttab/shifttab.zsh" >> "$pkgdir/usr/share/zsh/plugins/shifttab/README.md"
+    echo "# To use ShiftTab, add the one of the following at the end your ~/.zshrc:"
+    echo "source /usr/share/zsh/plugins/shifttab/shifttab.zsh"
+    echo "Or"
+    echo 'eval "$(ShiftTab --init zsh)"'
 }
