@@ -93,14 +93,29 @@ impl Default for KeyConfig {
     }
 }
 
-#[derive(Deserialize, Default, Debug)]
+fn default_enable_tldr() -> bool { true }
+
+#[derive(Deserialize, Debug)]
 #[serde(default)]
 struct Config {
     mode: Mode,
+    #[serde(default = "default_enable_tldr")]
+    enable_tldr: bool,
     #[serde(default)]
     colors: ColorConfig,
     #[serde(default)]
     keys: KeyConfig,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            mode: Mode::default(),
+            enable_tldr: true,
+            colors: ColorConfig::default(),
+            keys: KeyConfig::default(),
+        }
+    }
 }
 
 // --- CONFIG VALIDATION ---
@@ -144,6 +159,10 @@ fn main() -> anyhow::Result<()> {
 
 # Display mode: "extended" (full-screen) or "compact" (inline)
 mode = "extended"
+
+# TLDR Integration (extended mode only)
+# Keep this false if finding completions is too slow.
+enable_tldr = true
 
 # Color customization (RGB values 0-255)
 # Default theme: Catppuccin Mocha
@@ -411,6 +430,23 @@ vim_search = "/"               # Enter search mode
         completions.push(("--version".to_string(), "Show version info".to_string(), 0));
     }
 
+    // --- NEW: Fetch tldr for Extended Mode ---
+    let mut tldr_text = String::new();
+    if config.mode == Mode::Extended && config.enable_tldr && !base_command.is_empty() {
+        if let Ok(output) = std::process::Command::new("tldr").arg(base_command).output() {
+            if output.status.success() {
+                let stripped = strip_ansi_escapes::strip(&output.stdout);
+                tldr_text = String::from_utf8_lossy(&stripped).into_owned();
+                // Clean up extra blank lines from tldr output
+                tldr_text = tldr_text.lines().filter(|l| !l.trim().is_empty()).collect::<Vec<_>>().join("\n");
+            } else {
+                tldr_text = format!("No tldr entry found for '{}'.", base_command);
+            }
+        } else {
+            tldr_text = "tldr not installed, install it, or Disable it in config.".to_string();
+        }
+    }
+
     // MAIN GAME/TUI LOOP
     // Convert config colors to crossterm Color objects
     let color_base = Color::Rgb { r: config.colors.base.0, g: config.colors.base.1, b: config.colors.base.2 };
@@ -469,13 +505,44 @@ vim_search = "/"               # Enter search mode
             selected_index = filtered.len() - 1;
         }
 
+        let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
+
+        // --- PRE-CALCULATE HELP BAR ---
+        let mut help_lines = Vec::new();
+        if config.mode == Mode::Extended {
+            let nav_keys = if config.keys.modifier == "none" {
+                format!("[↑↓/{}{}]", config.keys.up, config.keys.down)
+            } else {
+                let mod_str = if config.keys.modifier == "ctrl" { "^" } else { "Alt+" };
+                format!("[↑↓/{}{}/{}{}]", config.keys.up, config.keys.down, mod_str, config.keys.up)
+            };
+            let help_text = format!(
+                "{} navigate | [{}] search | [Space] toggle | [Ctrl+Space] multi | [{}{}] jump | [Enter] select | [Esc] exit",
+                nav_keys, config.keys.vim_search, config.keys.vim_top, config.keys.vim_bottom
+            );
+            let max_text_width = (cols as usize).saturating_sub(4);
+            let mut current_line = String::new();
+            for word in help_text.split_whitespace() {
+                let word_len = word.chars().count();
+                let current_len = current_line.chars().count();
+                let space_needed = if current_line.is_empty() { 0 } else { 1 };
+                if current_len + word_len + space_needed > max_text_width && !current_line.is_empty() {
+                    help_lines.push(current_line.clone());
+                    current_line = word.to_string();
+                } else {
+                    if !current_line.is_empty() { current_line.push(' '); }
+                    current_line.push_str(word);
+                }
+            }
+            if !current_line.is_empty() { help_lines.push(current_line); }
+        }
+
         // Setup pagination/scrolling for our list
         // In extended mode, use full terminal height minus space for top padding, search box, separator, help bar, and status bar
         // In compact mode, limit to 10 rows
-        let (_, rows) = crossterm::terminal::size().unwrap_or((80, 24));
         let max_visible_items = if config.mode == Mode::Extended {
-            // Reserve 1 row for top padding + 2 rows for search box and separator + 1 row for help bar + 1 row for status bar
-            (rows as usize).saturating_sub(5).max(3)  // At least 3 rows
+            // Reserve 1 row for top padding + 2 rows for search box and separator + help_lines.len() + 1 status
+            (rows as usize).saturating_sub(4 + help_lines.len()).max(3)  // At least 3 rows
         } else {
             10  // Compact mode keeps 10 rows
         };
@@ -490,8 +557,6 @@ vim_search = "/"               # Enter search mode
         let visible_items: Vec<_> = filtered.iter().enumerate().skip(start_idx).take(max_visible_items).collect();
 
         // Let's figure out how wide the terminal is to build our pane split
-        let (cols, _) = crossterm::terminal::size().unwrap_or((80, 24));
-        
         // In compact mode, use more space for the description; in extended mode, use 50/50 split
         let left_pane_width = if config.mode == Mode::Extended {
             (cols / 2).saturating_sub(3) as usize
@@ -513,30 +578,39 @@ vim_search = "/"               # Enter search mode
             ""
         };
 
-        // Basic Word Wrap logic: split the description text so it fits securely inside the right_pane_width
-        // Using .chars().count() to properly handle Unicode characters, not bytes
-        let mut desc_lines = Vec::new();
-        let mut current_line = String::new();
-        for word in selected_desc.split_whitespace() {
-            let word_char_count = word.chars().count();
-            let current_line_char_count = current_line.chars().count();
-            let space_needed = if current_line.is_empty() { 0 } else { 1 };
-            
-            // If adding this word would exceed the pane width, start a new line
-            if current_line_char_count + word_char_count + space_needed > right_pane_width {
-                desc_lines.push(current_line.clone());
-                current_line = word.to_string();
-                
-                // If the single word itself exceeds the width, truncate it
-                if word_char_count > right_pane_width {
-                    current_line = word.chars().take(right_pane_width).collect();
+        let wrap_text = |text: &str, width: usize| -> Vec<String> {
+            let mut lines = Vec::new();
+            for paragraph in text.lines() {
+                let mut current_line = String::new();
+                for word in paragraph.split_whitespace() {
+                    let word_char_count = word.chars().count();
+                    let current_line_char_count = current_line.chars().count();
+                    let space_needed = if current_line.is_empty() { 0 } else { 1 };
+                    
+                    if current_line_char_count + word_char_count + space_needed > width {
+                        lines.push(current_line.clone());
+                        current_line = word.to_string();
+                        if word_char_count > width {
+                            current_line = word.chars().take(width).collect();
+                        }
+                    } else {
+                        if !current_line.is_empty() { current_line.push(' '); }
+                        current_line.push_str(word);
+                    }
                 }
-            } else {
-                if !current_line.is_empty() { current_line.push(' '); }
-                current_line.push_str(word);
+                if !current_line.is_empty() { lines.push(current_line); }
+                else if !text.is_empty() { lines.push(String::new()); }
             }
-        }
-        if !current_line.is_empty() { desc_lines.push(current_line); }
+            lines
+        };
+
+        let desc_lines = wrap_text(selected_desc, right_pane_width);
+        
+        let tldr_lines = if config.mode == Mode::Extended && config.enable_tldr {
+            wrap_text(&tldr_text, right_pane_width)
+        } else {
+            Vec::new()
+        };
 
         // Draw the split UI! We draw as many rows as available in the terminal.
         for row in 0..max_visible_items {
@@ -577,17 +651,57 @@ vim_search = "/"               # Enter search mode
                 (false, format!("{:<width$}", "", width = left_pane_width))
             };
 
-            // --- RIGHT PANE (The Description) ---
-            let right_text = if row < desc_lines.len() {
-                let mut chunk = desc_lines[row].clone();
-                // Use .chars().count() to properly handle Unicode characters, not bytes
-                let chunk_char_count = chunk.chars().count();
-                if chunk_char_count > right_pane_width {
-                    chunk = chunk.chars().take(right_pane_width).collect();
+            // --- RIGHT PANE (The Description & TLDR) ---
+            let right_text = if config.mode == Mode::Extended && config.enable_tldr {
+                let sep_row = max_visible_items / 2;
+                if row < sep_row {
+                    // Top half: TLDR
+                    if row < tldr_lines.len() {
+                        let mut chunk = tldr_lines[row].clone();
+                        let chunk_char_count = chunk.chars().count();
+                        if chunk_char_count > right_pane_width {
+                            chunk = chunk.chars().take(right_pane_width).collect();
+                        }
+                        format!(" {:<width$}", chunk, width = right_pane_width.saturating_sub(1))
+                    } else {
+                        format!("{:<width$}", "", width = right_pane_width)
+                    }
+                } else if row == sep_row {
+                    // Separator
+                    let title = " TLDR ⬆ │ ⬇ Description ";
+                    let title_len = title.chars().count();
+                    let pad_len = right_pane_width.saturating_sub(title_len) / 2;
+                    let padding = "─".repeat(pad_len);
+                    let remainder = "─".repeat(right_pane_width.saturating_sub(pad_len + title_len));
+                    let combined = format!("{}{}{}", padding, title, remainder);
+                    let limited: String = combined.chars().take(right_pane_width).collect();
+                    format!("{:<width$}", limited, width = right_pane_width)
+                } else {
+                    // Bottom half: Description
+                    let d_row = row - sep_row - 1;
+                    if d_row < desc_lines.len() {
+                        let mut chunk = desc_lines[d_row].clone();
+                        let chunk_char_count = chunk.chars().count();
+                        if chunk_char_count > right_pane_width {
+                            chunk = chunk.chars().take(right_pane_width).collect();
+                        }
+                        format!(" {:<width$}", chunk, width = right_pane_width.saturating_sub(1))
+                    } else {
+                        format!("{:<width$}", "", width = right_pane_width)
+                    }
                 }
-                format!(" {:<width$}", chunk, width = right_pane_width - 1)
             } else {
-                format!("{:<width$}", "", width = right_pane_width)
+                // Compact mode: just Description
+                if row < desc_lines.len() {
+                    let mut chunk = desc_lines[row].clone();
+                    let chunk_char_count = chunk.chars().count();
+                    if chunk_char_count > right_pane_width {
+                        chunk = chunk.chars().take(right_pane_width).collect();
+                    }
+                    format!(" {:<width$}", chunk, width = right_pane_width.saturating_sub(1))
+                } else {
+                    format!("{:<width$}", "", width = right_pane_width)
+                }
             };
 
             // --- RENDER THE ROW ---
@@ -624,50 +738,6 @@ vim_search = "/"               # Enter search mode
         
         // --- HELP BAR (Extended Mode Only) ---
         if config.mode == Mode::Extended {
-            // Build dynamic help text based on config
-            let nav_keys = if config.keys.modifier == "none" {
-                format!("[↑↓/{}{}]", config.keys.up, config.keys.down)
-            } else {
-                let mod_str = if config.keys.modifier == "ctrl" { "^" } else { "Alt+" };
-                format!("[↑↓/{}{}/{}{}]", config.keys.up, config.keys.down, mod_str, config.keys.up)
-            };
-            
-            // Build the actions part dynamically from config
-            let help_text = format!(
-                "{} navigate | [{}] search | [Space] toggle | [Ctrl+Space] multi | [{}{}] jump | [Enter] select | [Esc] exit",
-                nav_keys,
-                config.keys.vim_search,
-                config.keys.vim_top,
-                config.keys.vim_bottom
-            );
-            
-            // Get terminal width
-            let (cols, _) = crossterm::terminal::size().unwrap_or((80, 24));
-            let max_text_width = (cols as usize).saturating_sub(4); // Leave 2 char margin on each side
-            
-            // Word-wrap the help text to fit within max_text_width
-            let mut help_lines = Vec::new();
-            let mut current_line = String::new();
-            
-            for word in help_text.split_whitespace() {
-                let word_len = word.chars().count();
-                let current_len = current_line.chars().count();
-                let space_needed = if current_line.is_empty() { 0 } else { 1 };
-                
-                if current_len + word_len + space_needed > max_text_width && !current_line.is_empty() {
-                    help_lines.push(current_line.clone());
-                    current_line = word.to_string();
-                } else {
-                    if !current_line.is_empty() {
-                        current_line.push(' ');
-                    }
-                    current_line.push_str(word);
-                }
-            }
-            if !current_line.is_empty() {
-                help_lines.push(current_line);
-            }
-            
             // Render each line centered
             execute!(stderr, SetForegroundColor(color_border), Clear(ClearType::UntilNewLine))?;
             for (idx, line) in help_lines.iter().enumerate() {
