@@ -662,7 +662,37 @@ vim_search = "/"               # Enter search mode
                         if chunk_char_count > right_pane_width {
                             chunk = chunk.chars().take(right_pane_width).collect();
                         }
-                        format!(" {:<width$}", chunk, width = right_pane_width.saturating_sub(1))
+                        let padded = format!(" {:<width$}", chunk, width = right_pane_width.saturating_sub(1));
+                        
+                        let mut styled = String::new();
+                        let hl = config.colors.highlight;
+                        let txt = config.colors.text;
+                        let highlight_ansi = format!("\x1b[38;2;{};{};{}m", hl.0, hl.1, hl.2);
+                        let text_ansi = format!("\x1b[38;2;{};{};{}m", txt.0, txt.1, txt.2);
+                        
+                        let is_title = row == 0;
+                        if is_title {
+                            styled.push_str("\x1b[1m"); // Bold
+                            styled.push_str(&highlight_ansi);
+                        }
+                        
+                        for c in padded.chars() {
+                            // Color symbols: not alphanumeric and not a space/whitespace
+                            if !is_title && !c.is_alphanumeric() && !c.is_whitespace() {
+                                styled.push_str(&highlight_ansi);
+                                styled.push(c);
+                                styled.push_str(&text_ansi);
+                            } else {
+                                styled.push(c);
+                            }
+                        }
+                        
+                        if is_title {
+                            styled.push_str("\x1b[22m"); // Un-bold
+                            styled.push_str(&text_ansi);
+                        }
+                        
+                        styled
                     } else {
                         format!("{:<width$}", "", width = right_pane_width)
                     }
