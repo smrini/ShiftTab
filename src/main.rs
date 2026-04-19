@@ -65,20 +65,11 @@ struct KeyConfig {
     down: String,
     #[serde(default = "default_modifier")]
     modifier: String,  // "ctrl", "alt", or "none"
-    #[serde(default = "default_vim_top")]
-    vim_top: String,  // "g"
-    #[serde(default = "default_vim_bottom")]
-    vim_bottom: String,  // "G"
-    #[serde(default = "default_vim_search")]
-    vim_search: String,  // "/"
 }
 
 fn default_up() -> String { "k".to_string() }
 fn default_down() -> String { "j".to_string() }
 fn default_modifier() -> String { "ctrl".to_string() }
-fn default_vim_top() -> String { "g".to_string() }
-fn default_vim_bottom() -> String { "G".to_string() }
-fn default_vim_search() -> String { "/".to_string() }
 
 impl Default for KeyConfig {
     fn default() -> Self {
@@ -86,9 +77,6 @@ impl Default for KeyConfig {
             up: "k".to_string(),
             down: "j".to_string(),
             modifier: "ctrl".to_string(),
-            vim_top: "g".to_string(),
-            vim_bottom: "G".to_string(),
-            vim_search: "/".to_string(),
         }
     }
 }
@@ -145,9 +133,6 @@ fn validate_config(config: &Config) -> anyhow::Result<()> {
     if config.keys.down.is_empty() {
         return Err(anyhow::anyhow!("Invalid config: 'down' key binding cannot be empty"));
     }
-    if config.keys.vim_search.is_empty() {
-        return Err(anyhow::anyhow!("Invalid config: 'vim_search' key binding cannot be empty"));
-    }
     
     Ok(())
 }
@@ -196,7 +181,6 @@ bindkey '^[[Z' _shifttab_widget"#);
 mode = "extended"
 
 # TLDR Integration (extended mode only)
-# Keep this false if finding completions is too slow.
 enable_tldr = true
 
 # Color customization (RGB values 0-255)
@@ -215,14 +199,9 @@ up = "k"                       # Move up when pressed with the modifier key
 down = "j"                     # Move down when pressed with the modifier key
 modifier = "ctrl"              # Modifier for navigation: "ctrl", "alt", or "none"
 
-# Vim-style navigation (always available)
-vim_top = "g"                  # Go to top of list (press twice: gg)
-vim_bottom = "G"               # Go to bottom of list
-vim_search = "/"               # Enter search mode
-
 # When modifier = "ctrl": Use Ctrl+K to navigate up, Ctrl+J to navigate down
 # When modifier = "alt":  Use Alt+K to navigate up, Alt+J to navigate down
-# When modifier = "none": hjkl always navigate (same as old behavior)
+# When modifier = "none": hjkl always navigate (you can't use them to type)
 # Arrow keys always work for navigation
 # Selection: Enter always selects
 # Exit: Escape always exits
@@ -373,10 +352,26 @@ vim_search = "/"               # Enter search mode
         
         // CACHE MISS (or cache was empty): We must run the expensive background system process
         if completions.is_empty() {
+            let mut help_text_raw = String::new();
+            
             if let Ok(output) = std::process::Command::new(base_command).arg("--help").output() {
-                let help_text_raw = String::from_utf8_lossy(&output.stdout);
-                let stripped = strip_ansi_escapes::strip(&*help_text_raw);
-                let help_text = String::from_utf8_lossy(&stripped).into_owned();
+                help_text_raw.push_str(&String::from_utf8_lossy(&output.stdout));
+                help_text_raw.push_str("\n");
+                help_text_raw.push_str(&String::from_utf8_lossy(&output.stderr));
+            }
+            
+            // Fallback to man pages for commands like 'ps' or 'pacman' that don't list flags in standard --help
+            if let Ok(child) = std::process::Command::new("man").arg(base_command).stdout(std::process::Stdio::piped()).spawn() {
+                if let Some(stdout) = child.stdout {
+                    if let Ok(output) = std::process::Command::new("col").arg("-bx").stdin(stdout).output() {
+                        help_text_raw.push_str("\n");
+                        help_text_raw.push_str(&String::from_utf8_lossy(&output.stdout));
+                    }
+                }
+            }
+
+            let stripped = strip_ansi_escapes::strip(&*help_text_raw);
+            let help_text = String::from_utf8_lossy(&stripped).into_owned();
                 
                 let mut current_flag: Option<String> = None;
                 let mut current_desc = String::new();
@@ -455,7 +450,6 @@ vim_search = "/"               # Enter search mode
                 // We use Tab (\t) to separate Flag, Description, and Score
                 let cache_contents: Vec<String> = completions.iter().map(|(f, d, s)| format!("{}\t{}\t{}", f, d, s)).collect();
                 let _ = std::fs::write(cache_path, cache_contents.join("\n"));
-            }
         }
     }
 
@@ -488,9 +482,6 @@ vim_search = "/"               # Enter search mode
     let color_text = Color::Rgb { r: config.colors.text.0, g: config.colors.text.1, b: config.colors.text.2 };
     let color_highlight = Color::Rgb { r: config.colors.highlight.0, g: config.colors.highlight.1, b: config.colors.highlight.2 };
     let color_border = Color::Rgb { r: config.colors.border.0, g: config.colors.border.1, b: config.colors.border.2 };
-    
-    let mut last_vim_top_time = std::time::Instant::now();
-    let vim_double_tap_timeout = std::time::Duration::from_millis(300);
     
     loop {
         // 1. The Render Phase
@@ -552,8 +543,8 @@ vim_search = "/"               # Enter search mode
                 format!("[↑↓/{}{}/{}{}]", config.keys.up, config.keys.down, mod_str, config.keys.up)
             };
             let help_text = format!(
-                "{} navigate | [{}] search | [Space] toggle | [Ctrl+Space] multi | [{}{}] jump | [Enter] select | [Esc] exit",
-                nav_keys, config.keys.vim_search, config.keys.vim_top, config.keys.vim_bottom
+                "{} navigate | [Type] search | [Space] toggle | [Ctrl+Space] multi | [Enter] select | [Esc] exit",
+                nav_keys
             );
             let max_text_width = (cols as usize).saturating_sub(4);
             let mut current_line = String::new();
@@ -853,7 +844,7 @@ vim_search = "/"               # Enter search mode
                 execute!(stderr, SetForegroundColor(color_border))?;
                 write!(stderr, " {} ", scrollbar)?;
                 execute!(stderr, SetForegroundColor(color_text))?;
-                write!(stderr, "[{}]", status_text)?;
+                write!(stderr, "[{}] ", status_text)?;
             } else {
                 // Compact mode: show scrollbar spanning full width + status counter
                 let scrollbar_width = (cols as usize).saturating_sub(status_text.len() + 5);  // -6 for spacing and brackets
@@ -968,35 +959,6 @@ vim_search = "/"               # Enter search mode
                         "none" => true,  // No modifier required
                         _ => false,      // Unknown modifier, treat as no match
                     };
-                    
-                    // --- VIM KEYBINDINGS (require modifier) ---
-                    // "/" enters search mode (clears current search)
-                    if c_str == config.keys.vim_search && modifier_matches {
-                        search_query.clear();
-                        continue;
-                    }
-                    
-                    // "G" goes to bottom
-                    if c_str == config.keys.vim_bottom && modifier_matches {
-                        if !filtered.is_empty() {
-                            selected_index = filtered.len() - 1;
-                        }
-                        continue;
-                    }
-                    
-                    // "g" goes to top (requires double tap: gg)
-                    if c_str == config.keys.vim_top && modifier_matches {
-                        let now = std::time::Instant::now();
-                        if now.duration_since(last_vim_top_time) < vim_double_tap_timeout {
-                            // Double tap detected, go to top
-                            selected_index = 0;
-                            last_vim_top_time = std::time::Instant::now() - std::time::Duration::from_secs(1); // Reset
-                        } else {
-                            // First tap, set timer
-                            last_vim_top_time = now;
-                        }
-                        continue;
-                    }
                     
                     // Check if this character matches a navigation key
                     let is_up_key = c_str == config.keys.up;

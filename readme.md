@@ -16,13 +16,13 @@
 
 ---
 
-## 📸 Preview
+## Preview
 
 > *I will need to add a screen shot here later*
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ShiftTab operates entirely within the background of your terminal workflow:
 
@@ -38,7 +38,7 @@ You can also interact with the ShiftTab binary directly for standard system quer
 
 ---
 
-## ✨ Features
+## Features
 
 * **Dynamic Parsing:** Automatically generates completions by reading standard system manuals and help outputs on the fly.
 * **Dual Interface Modes:**
@@ -50,7 +50,7 @@ You can also interact with the ShiftTab binary directly for standard system quer
 
 ---
 
-## 🛠️ Installation
+## Installation
 
 ShiftTab provides multiple installation paths to suit varying system administration preferences.
 
@@ -63,6 +63,8 @@ curl -sSL https://raw.githubusercontent.com/smrini/ShiftTab/master/install.sh | 
 
 ### 2. Standalone Binary (Manual)
 For users who prefer to manage their own binaries or install via Cargo.
+
+Clone this repo, then build and install with cargo.
 
 ```bash
 # Build and install the binary
@@ -78,6 +80,12 @@ Once the binary is in your `PATH`, add the following line to your `~/.zshrc` to 
 eval "$(ShiftTab --init zsh)"
 ```
 
+Then Make sure to reload zsh cofiguration:
+
+```bash
+source ~/.zshrc
+```
+
 ### 3. Arch Linux (AUR)
 A standard `PKGBUILD` is provided for Arch-based distributions. You can build and install it natively through `makepkg` or an AUR helper.
 
@@ -90,7 +98,7 @@ makepkg -si
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 Following the XDG Base Directory specification, ShiftTab automatically generates its configuration file at `~/.config/shifttab/config.toml` upon first run. 
 
@@ -106,14 +114,29 @@ enable_tldr = true
 # ANSI True Color Palette Configuration (R, G, B)
 # Defaults to the Catppuccin Mocha theme.
 [colors]
-base = [36, 39, 58]
-text = [202, 211, 245]
-highlight = [198, 160, 246]
-border = [73, 77, 100]
+base = [36, 39, 58]           # Background color
+text = [202, 211, 245]        # Text color
+highlight = [198, 160, 246]   # Highlight/selected item color
+border = [73, 77, 100]        # Border/separator color
+
+# Keybinding customization
+# Navigation uses modifiers (Ctrl or Alt) so you can type normally
+# For example: Ctrl+K moves up, plain 'k' is just a regular character
+[keys]
+up = "k"                       # Move up when pressed with the modifier key
+down = "j"                     # Move down when pressed with the modifier key
+modifier = "ctrl"              # Modifier for navigation: "ctrl", "alt", or "none"
+
+# When modifier = "ctrl": Use Ctrl+K to navigate up, Ctrl+J to navigate down
+# When modifier = "alt":  Use Alt+K to navigate up, Alt+J to navigate down
+# When modifier = "none": hjkl always navigate (same as old behavior)
+# Arrow keys always work for navigation
+# Selection: Enter always selects
+# Exit: Escape always exits
 ```
 
 ---
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
