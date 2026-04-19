@@ -153,6 +153,41 @@ fn validate_config(config: &Config) -> anyhow::Result<()> {
 }
 
 fn main() -> anyhow::Result<()> {
+    // --- Step 0: Handle the CLI flags ---
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() == 2 {
+        if args[1] == "--version" || args[1] == "-v" {
+            println!("ShiftTab {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        if args[1] == "--help" || args[1] == "-h" {
+            println!("ShiftTab - A Zsh TUI autocomplete tool");
+            println!("Usage:");
+            println!("  ShiftTab [OPTIONS] [BUFFER]");
+            println!("Options:");
+            println!("  -h, --help       Show this help message");
+            println!("  -v, --version    Show version information");
+            println!("  --init zsh       Output Zsh integration script");
+            return Ok(());
+        }
+    }
+    if args.len() == 3 && args[1] == "--init" && args[2] == "zsh" {
+        println!(r#"# shifttab.zsh - ShiftTab ZLE integration
+# To use this without saving a script, add this to your .zshrc:
+# eval "$(ShiftTab --init zsh)"
+
+function _shifttab_widget() {{
+    local new_buffer=$(ShiftTab "$LBUFFER" </dev/tty)
+    if [[ -n "$new_buffer" ]]; then
+        LBUFFER="$new_buffer"
+    fi
+    zle reset-prompt
+}}
+zle -N _shifttab_widget
+bindkey '^[[Z' _shifttab_widget"#);
+        return Ok(());
+    }
+
     // Default configuration content
     const DEFAULT_CONFIG: &str = r#"# ShiftTab Configuration File
 # Location: ~/.config/shifttab/config.toml
