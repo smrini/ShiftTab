@@ -20,11 +20,25 @@ fi
 BIN_URL="$BASE_URL/$BIN_NAME"
 SHA_URL="$BASE_URL/$BIN_NAME.sha256"
 
-INSTALL_DIR="$HOME/.local/bin"
+# Determine the best installation directory based on user's PATH
+INSTALL_DIR=""
+for dir in "$HOME/.local/bin" "$HOME/.cargo/bin" "$HOME/bin"; do
+    if [[ ":$PATH:" == *":$dir:"* ]]; then
+        INSTALL_DIR="$dir"
+        break
+    fi
+done
+
+# Fallback if no preferred directories are in PATH
+if [ -z "$INSTALL_DIR" ]; then
+    INSTALL_DIR="$HOME/.local/bin"
+fi
+
 CONFIG_DIR="$HOME/.config/shifttab"
 ZSH_PLUGIN_URL="https://raw.githubusercontent.com/$REPO/master/shifttab.zsh"
 
 echo "=> Preparing directories..."
+echo "   Using install directory: $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$CONFIG_DIR"
 
@@ -58,11 +72,13 @@ else
     echo "✓ ~/.zshrc already contains ShiftTab."
 fi
 
-# Make sure .local/bin is in PATH for future sessions
-if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+# Make sure the install directory is in PATH for future sessions
+if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     echo ""
-    echo "WARNING: $HOME/.local/bin is not in your PATH."
-    echo "Please add 'export PATH=\"\$HOME/.local/bin:\$PATH\"' to your ~/.zshrc"
+    echo "WARNING: $INSTALL_DIR is not in your PATH."
+    echo "=> Automatically adding $INSTALL_DIR to your ~/.zshrc PATH..."
+    echo -e "\n# Add ShiftTab install directory to PATH\nexport PATH=\"$INSTALL_DIR:\$PATH\"" >> "$HOME/.zshrc"
+    echo "✓ PATH updated in ~/.zshrc."
 fi
 
 echo ""
