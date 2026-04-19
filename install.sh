@@ -29,19 +29,20 @@ mkdir -p "$INSTALL_DIR"
 mkdir -p "$CONFIG_DIR"
 
 echo "=> Downloading ShiftTab binary..."
-curl -fsSL "$BIN_URL" -o "$INSTALL_DIR/ShiftTab"
-curl -fsSL "$SHA_URL" -o "$INSTALL_DIR/ShiftTab.sha256"
+curl -fsSL "$BIN_URL" -o "$INSTALL_DIR/$BIN_NAME"
+curl -fsSL "$SHA_URL" -o "$INSTALL_DIR/$BIN_NAME.sha256"
 
 echo "=> Verifying SHA256 Checksum..."
 cd "$INSTALL_DIR"
-if sha256sum -c "ShiftTab.sha256" 2>/dev/null; then
+if sha256sum -c "$BIN_NAME.sha256" 2>/dev/null; then
     echo "✓ Checksum OK"
+    mv "$BIN_NAME" "ShiftTab"
 else
     echo "✗ Checksum Failed! Aborting installation."
-    rm -f "ShiftTab" "ShiftTab.sha256"
+    rm -f "$BIN_NAME" "$BIN_NAME.sha256" "ShiftTab"
     exit 1
 fi
-rm -f "ShiftTab.sha256"
+rm -f "$BIN_NAME.sha256"
 
 echo "=> Making binary executable..."
 chmod +x "$INSTALL_DIR/ShiftTab"
