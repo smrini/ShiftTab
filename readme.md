@@ -18,9 +18,14 @@
 
 ## Preview
 
-> *I will need to add a screen shot here later*
+> *ShiftTab Compact Mode*
 
----
+![ShiftTab](https://i.imgur.com/znLFhwU.png)
+
+> *ShiftTab Extended Mode*
+
+![ShiftTab](https://i.imgur.com/yJZBeK4.png)
+
 
 ## Quick Start
 
