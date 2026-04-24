@@ -24,7 +24,8 @@
 
 > *ShiftTab Extended Mode*
 
-![ShiftTab](https://i.imgur.com/yJZBeK4.png)
+![ShiftTab](https://i.imgur.com/73fhHHn.png)
+
 
 
 ## Quick Start
