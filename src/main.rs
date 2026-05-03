@@ -373,9 +373,15 @@ modifier = "ctrl"              # Modifier for navigation: "ctrl", "alt", or "non
             // Fallback to man pages for commands like 'ps' or 'pacman' that don't list flags in standard --help
             if let Ok(child) = std::process::Command::new("man").arg(base_command).stdout(std::process::Stdio::piped()).spawn() {
                 if let Some(stdout) = child.stdout {
-                    if let Ok(output) = std::process::Command::new("col").arg("-bx").stdin(stdout).output() {
-                        help_text_raw.push_str("\n");
-                        help_text_raw.push_str(&String::from_utf8_lossy(&output.stdout));
+                    // Try to use 'col' for ANSI stripping if available, otherwise use raw output
+                    match std::process::Command::new("col").arg("-bx").stdin(stdout).output() {
+                        Ok(output) => {
+                            help_text_raw.push_str("\n");
+                            help_text_raw.push_str(&String::from_utf8_lossy(&output.stdout));
+                        }
+                        Err(_) => {
+                            // If 'col' is not available, the man output might have ANSI codes but we'll handle that later
+                        }
                     }
                 }
             }
@@ -531,7 +537,7 @@ modifier = "ctrl"              # Modifier for navigation: "ctrl", "alt", or "non
         // Prepare the filtered list (Note: completions is now a Vec with score)
         let filtered: Vec<&(String, String, usize)> = completions
             .iter()
-            .filter(|c| c.0.contains(&search_query))
+            .filter(|c| c.0.to_lowercase().contains(&search_query.to_lowercase()))
             .collect();
 
         // Ensure our selection doesn't go out of bounds if the list shrinks

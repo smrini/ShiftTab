@@ -11,6 +11,7 @@ makedepends=('cargo' 'git')
 provides=("shifttab")
 conflicts=("shifttab")
 source=("git+https://github.com/smrini/ShiftTab.git")
+# sha256sums: Skipping verification for git source (verified at build time by git)
 sha256sums=('SKIP')
 
 build() {

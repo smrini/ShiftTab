@@ -2,7 +2,7 @@
 
 function _shifttab_widget() {
     # 1. Ask Rust: "Here is my whole line buffer. Tell me what it SHOULD be."
-    local new_buffer=$(/home/dev/ShiftTab/target/debug/ShiftTab "$LBUFFER" </dev/tty)
+    local new_buffer=$(ShiftTab "$LBUFFER" </dev/tty)
 
     # 2. If the user didn't cancel (the output isn't empty)
     if [[ -n "$new_buffer" ]]; then
