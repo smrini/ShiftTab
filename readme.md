@@ -67,20 +67,22 @@ The fastest way to install on any standard Linux/macOS system. This script dynam
 curl -sSL https://raw.githubusercontent.com/smrini/ShiftTab/master/install.sh | bash
 ```
 
-### 2. Auto-Bootstrapping `.zshrc` Snippet
-Add this highly convenient, self-installing snippet directly anywhere inside your `~/.zshrc`. Every time a new shell session opens, it will verify ShiftTab is installed (downloading it if it's missing) and cleanly initialize the plugin:
+### 2. Arch Linux (AUR)
+A standard `PKGBUILD` is provided for Arch-based distributions. You can build and install it natively through `makepkg` or an AUR helper.
 
-```zsh
-# ShiftTab TUI Autocomplete Bootstrap
-if ! command -v ShiftTab >/dev/null 2>&1; then
-    echo "ShiftTab not found. Installing..."
-    curl -sSL https://raw.githubusercontent.com/smrini/ShiftTab/master/install.sh | bash
-    
-    # Reload local PATH overrides for immediate use
-    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/bin:$PATH"
-fi
-
+```bash
+# Clone the repository and build the package
+git clone https://github.com/smrini/ShiftTab.git
+cd ShiftTab
+makepkg -si
+```
+Once the binary is in your `PATH`, add one the following lines at the end of your `~/.zshrc` to bind ShiftTab to your shell's Zsh Line Editor (ZLE):
+```bash
 eval "$(ShiftTab --init zsh)"
+```
+or
+```bash
+source /usr/share/zsh/plugins/shifttab/shifttab.zsh
 ```
 
 ### 3. Standalone Binary (Manual)
@@ -96,26 +98,19 @@ cargo install --path .
 # e.g., /usr/local/bin/ShiftTab
 ```
 
-Once the binary is in your `PATH`, add the following line to your `~/.zshrc` to bind ShiftTab to your shell's Zsh Line Editor (ZLE):
-
+your shell's Zsh Line Editor (ZLE):
 ```bash
 eval "$(ShiftTab --init zsh)"
 ```
+or
+```bash
+source /usr/share/zsh/plugins/shifttab/shifttab.zsh
+```
 
-Then Make sure to reload zsh cofiguration:
+Then Make sure to restart your terminal or reload zsh cofiguration:
 
 ```bash
 source ~/.zshrc
-```
-
-### 3. Arch Linux (AUR)
-A standard `PKGBUILD` is provided for Arch-based distributions. You can build and install it natively through `makepkg` or an AUR helper.
-
-```bash
-# Clone the repository and build the package
-git clone https://github.com/smrini/ShiftTab.git
-cd ShiftTab
-makepkg -si
 ```
 
 ---
