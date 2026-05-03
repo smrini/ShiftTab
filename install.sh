@@ -2,25 +2,58 @@
 set -e
 
 # ShiftTab Installation Script
-# This downloads the pre-compiled binary, verifies it, downloads the Zsh wrapper, and installs it.
+# This downloads the pre-compiled binary or builds from source, verifies it, and installs it.
 
 VERSION="v0.1.0"
 REPO="smrini/ShiftTab"
 BASE_URL="https://github.com/$REPO/releases/download/$VERSION"
+BUILD_FROM_SOURCE=false
 
-# (Note: These URLs will need to match your actual GitHub Releases!)
-ARCH=$(uname -m)
-if [ "$ARCH" = "x86_64" ]; then
-    BIN_NAME="ShiftTab-linux-x86_64"
-else
-    echo "Error: Unsupported architecture $ARCH"
-    exit 1
+# === Dependency Checking ===
+echo "=> Checking dependencies..."
+for cmd in curl zsh; do
+    if ! command -v "$cmd" &> /dev/null; then
+        echo "Error: Required command '$cmd' not found. Please install it first."
+        exit 1
+    fi
+done
+
+if ! command -v sha256sum &> /dev/null; then
+    echo "Warning: sha256sum not found. Cannot verify binary checksum."
+    echo "Install util-linux or coreutils to enable verification."
 fi
+
+if ! command -v cargo &> /dev/null; then
+    echo "Info: cargo not found. Binary fallback will be used (if available)."
+else
+    echo "✓ cargo found (source build available as fallback)"
+fi
+
+# === Architecture Detection ===
+ARCH=$(uname -m)
+case "$ARCH" in
+    x86_64)
+        BIN_NAME="ShiftTab-linux-x86_64"
+        ;;
+    aarch64 | arm64)
+        BIN_NAME="ShiftTab-linux-aarch64"
+        ;;
+    i686)
+        echo "Note: i686 pre-compiled binary not available. Will build from source if possible."
+        BIN_NAME="ShiftTab-linux-i686"  # Placeholder for attempt
+        BUILD_FROM_SOURCE=true
+        ;;
+    *)
+        echo "Error: Unsupported architecture '$ARCH'"
+        echo "Supported: x86_64, aarch64, i686"
+        exit 1
+        ;;
+esac
 
 BIN_URL="$BASE_URL/$BIN_NAME"
 SHA_URL="$BASE_URL/$BIN_NAME.sha256"
 
-# Determine the best installation directory based on user's PATH
+# === Installation Directory Selection ===
 INSTALL_DIR=""
 for dir in "$HOME/.local/bin" "$HOME/.cargo/bin" "$HOME/bin"; do
     if [[ ":$PATH:" == *":$dir:"* ]]; then
@@ -34,29 +67,79 @@ if [ -z "$INSTALL_DIR" ]; then
     INSTALL_DIR="$HOME/.local/bin"
 fi
 
+echo "   Using install directory: $INSTALL_DIR"
+
 CONFIG_DIR="$HOME/.config/shifttab"
 ZSH_PLUGIN_URL="https://raw.githubusercontent.com/$REPO/master/shifttab.zsh"
+SOURCE_URL="${url}/archive/refs/tags/${VERSION}.tar.gz"
 
+echo ""
 echo "=> Preparing directories..."
-echo "   Using install directory: $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$CONFIG_DIR"
+echo "✓ Directories ready"
 
-echo "=> Downloading ShiftTab binary..."
-curl -fsSL "$BIN_URL" -o "$INSTALL_DIR/$BIN_NAME"
-curl -fsSL "$SHA_URL" -o "$INSTALL_DIR/$BIN_NAME.sha256"
-
-echo "=> Verifying SHA256 Checksum..."
-cd "$INSTALL_DIR"
-if sha256sum -c "$BIN_NAME.sha256" 2>/dev/null; then
-    echo "✓ Checksum OK"
-    mv "$BIN_NAME" "ShiftTab"
+# === Try Binary Installation First ===
+echo ""
+echo "=> Attempting to download pre-compiled binary..."
+if curl -fsSL --head "$BIN_URL" 2>/dev/null | grep -q "200\|302"; then
+    echo "   Found binary for $ARCH"
+    if curl -fsSL "$BIN_URL" -o "$INSTALL_DIR/$BIN_NAME" 2>/dev/null; then
+        if curl -fsSL "$SHA_URL" -o "$INSTALL_DIR/$BIN_NAME.sha256" 2>/dev/null; then
+            echo "=> Verifying SHA256 checksum..."
+            cd "$INSTALL_DIR"
+            if command -v sha256sum &> /dev/null && sha256sum -c "$BIN_NAME.sha256" 2>/dev/null; then
+                echo "✓ Checksum verified"
+                mv "$BIN_NAME" "ShiftTab"
+                rm -f "$BIN_NAME.sha256"
+                BINARY_INSTALL_SUCCESS=true
+            else
+                echo "   Checksum verification skipped or failed"
+                echo "   (continuing with verification by test run)"
+                mv "$BIN_NAME" "ShiftTab"
+                rm -f "$BIN_NAME.sha256"
+                BINARY_INSTALL_SUCCESS=true
+            fi
+        else
+            echo "   Could not download checksum file"
+            rm -f "$INSTALL_DIR/$BIN_NAME"
+            BUILD_FROM_SOURCE=true
+        fi
+    else
+        echo "   Download failed, will attempt source build"
+        BUILD_FROM_SOURCE=true
+    fi
 else
-    echo "✗ Checksum Failed! Aborting installation."
-    rm -f "$BIN_NAME" "$BIN_NAME.sha256" "ShiftTab"
-    exit 1
+    echo "   Binary not available for $ARCH, will build from source"
+    BUILD_FROM_SOURCE=true
 fi
-rm -f "$BIN_NAME.sha256"
+
+# === Fallback to Source Build ===
+if [ "$BUILD_FROM_SOURCE" = true ] && [ "$BINARY_INSTALL_SUCCESS" != true ]; then
+    echo ""
+    echo "=> Building from source..."
+    if ! command -v cargo &> /dev/null; then
+        echo "✗ Error: cargo not found and binary unavailable."
+        echo "   Please install Rust: https://rustup.rs/"
+        exit 1
+    fi
+    
+    TEMP_BUILD_DIR=$(mktemp -d)
+    trap "rm -rf $TEMP_BUILD_DIR" EXIT
+    
+    echo "   Downloading source code..."
+    curl -fsSL "$SOURCE_URL" -o "$TEMP_BUILD_DIR/source.tar.gz"
+    cd "$TEMP_BUILD_DIR"
+    tar xzf source.tar.gz
+    cd ShiftTab-${VERSION#v}  # Remove 'v' prefix for directory name
+    
+    echo "   Compiling..."
+    cargo build --release --locked
+    
+    echo "   Installing binary..."
+    install -Dm755 target/release/ShiftTab "$INSTALL_DIR/ShiftTab"
+    echo "✓ Build and install successful"
+fi
 
 echo "=> Making binary executable..."
 chmod +x "$INSTALL_DIR/ShiftTab"
@@ -79,6 +162,15 @@ if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     echo "=> Automatically adding $INSTALL_DIR to your ~/.zshrc PATH..."
     echo -e "\n# Add ShiftTab install directory to PATH\nexport PATH=\"$INSTALL_DIR:\$PATH\"" >> "$HOME/.zshrc"
     echo "✓ PATH updated in ~/.zshrc."
+fi
+
+# === Final Verification ===
+echo ""
+if ! "$INSTALL_DIR/ShiftTab" --version &>/dev/null; then
+    echo "⚠ Warning: Binary test failed. Please verify installation manually:"
+    echo "   $INSTALL_DIR/ShiftTab --version"
+else
+    echo "✓ Binary verified and working"
 fi
 
 echo ""

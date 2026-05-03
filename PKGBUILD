@@ -1,5 +1,5 @@
 # Maintainer: Said Mrini <smrini@example.com>
-pkgname=shifttab-git
+pkgname=shifttab
 pkgver=0.1.0
 pkgrel=1
 pkgdesc="A Zsh TUI autocomplete tool for dynamically finding flags and arguments directly from man pages/--help outputs."
@@ -7,12 +7,14 @@ arch=('x86_64' 'i686' 'aarch64')
 url="https://github.com/smrini/ShiftTab"
 license=('MIT')
 depends=('zsh')
-makedepends=('cargo' 'git')
+makedepends=('cargo')
+optdepends=('man: for parsing command man pages'
+            'util-linux: for col command (ANSI stripping)'
+            'tldr: for command examples in extended mode')
 provides=("shifttab")
-conflicts=("shifttab")
-source=("git+https://github.com/smrini/ShiftTab.git")
-# sha256sums: Skipping verification for git source (verified at build time by git)
-sha256sums=('SKIP')
+conflicts=("shifttab-git")
+source=("${url}/archive/refs/tags/v${pkgver}.tar.gz")
+sha256sums=('5d80960e9739e51de4a37750e0675e4c5d0e86d34f2c9fa3b8379e9f05971ada')
 
 build() {
     cd "$srcdir/ShiftTab"

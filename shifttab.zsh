@@ -1,7 +1,6 @@
-# shifttab.zsh - The bridge between ZLE (Zsh Line Editor) and our Rust binary
+# shifttab.zsh - The bridge between ZLE (Zsh Line Editor) and the Rust binary
 
 function _shifttab_widget() {
-    # 1. Ask Rust: "Here is my whole line buffer. Tell me what it SHOULD be."
     local new_buffer=$(ShiftTab "$LBUFFER" </dev/tty)
 
     # 2. If the user didn't cancel (the output isn't empty)
