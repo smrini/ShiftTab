@@ -352,37 +352,68 @@ modifier = "ctrl"              # Modifier for navigation: "ctrl", "alt", or "non
         
         // CACHE MISS (or cache was empty): We must run the expensive background system process
         if completions.is_empty() {
-            // Draw a temporary loading indicator
+            // Draw a temporary loading indicator with spinner
+            let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            let mut spinner_idx = 0;
+            
             if config.mode == Mode::Extended {
                 let _ = execute!(stderr, MoveTo(0, 0), Clear(ClearType::All));
-                let _ = write!(stderr, "\r\n  Fetching manual pages for '{}'... Please wait.\r\n", base_command);
             } else {
                 let _ = execute!(stderr, RestorePosition, Clear(ClearType::FromCursorDown));
-                let _ = write!(stderr, "\r\n  Fetching manual pages for '{}'... Please wait.\r\n", base_command);
             }
-            let _ = stderr.flush();
 
             let mut help_text_raw = String::new();
+            let mut help_found = false;
             
+            // Try --help first
             if let Ok(output) = std::process::Command::new(base_command).arg("--help").output() {
-                help_text_raw.push_str(&String::from_utf8_lossy(&output.stdout));
-                help_text_raw.push_str("\n");
-                help_text_raw.push_str(&String::from_utf8_lossy(&output.stderr));
+                if !output.stdout.is_empty() || !output.stderr.is_empty() {
+                    help_text_raw.push_str(&String::from_utf8_lossy(&output.stdout));
+                    help_text_raw.push_str("\n");
+                    help_text_raw.push_str(&String::from_utf8_lossy(&output.stderr));
+                    help_found = true;
+                    let _ = write!(stderr, "\r\n  {} Checking {} (--help)... ✓ Found\r\n", spinner_frames[spinner_idx], base_command);
+                    let _ = stderr.flush();
+                } else {
+                    let _ = write!(stderr, "\r\n  {} Checking {} (--help)... ✗ Not available\r\n", spinner_frames[spinner_idx], base_command);
+                    let _ = stderr.flush();
+                }
+            } else {
+                let _ = write!(stderr, "\r\n  {} Checking {} (--help)... ✗ Not available\r\n", spinner_frames[spinner_idx], base_command);
+                let _ = stderr.flush();
             }
             
+            spinner_idx = (spinner_idx + 1) % spinner_frames.len();
+            
             // Fallback to man pages for commands like 'ps' or 'pacman' that don't list flags in standard --help
-            if let Ok(child) = std::process::Command::new("man").arg(base_command).stdout(std::process::Stdio::piped()).spawn() {
-                if let Some(stdout) = child.stdout {
-                    // Try to use 'col' for ANSI stripping if available, otherwise use raw output
-                    match std::process::Command::new("col").arg("-bx").stdin(stdout).output() {
-                        Ok(output) => {
-                            help_text_raw.push_str("\n");
-                            help_text_raw.push_str(&String::from_utf8_lossy(&output.stdout));
-                        }
-                        Err(_) => {
-                            // If 'col' is not available, the man output might have ANSI codes but we'll handle that later
+            if !help_found {
+                let _ = write!(stderr, "  {} Checking man pages for '{}'...\r", spinner_frames[spinner_idx], base_command);
+                let _ = stderr.flush();
+                
+                if let Ok(child) = std::process::Command::new("man").arg(base_command).stdout(std::process::Stdio::piped()).spawn() {
+                    if let Some(stdout) = child.stdout {
+                        // Try to use 'col' for ANSI stripping if available, otherwise use raw output
+                        match std::process::Command::new("col").arg("-bx").stdin(stdout).output() {
+                            Ok(output) => {
+                                if !output.stdout.is_empty() {
+                                    help_text_raw.push_str("\n");
+                                    help_text_raw.push_str(&String::from_utf8_lossy(&output.stdout));
+                                    let _ = write!(stderr, "  {} Checking man pages for '{}'... ✓ Found    \r\n", spinner_frames[spinner_idx], base_command);
+                                    let _ = stderr.flush();
+                                } else {
+                                    let _ = write!(stderr, "  {} Checking man pages for '{}'... ✗ No entry \r\n", spinner_frames[spinner_idx], base_command);
+                                    let _ = stderr.flush();
+                                }
+                            }
+                            Err(_) => {
+                                let _ = write!(stderr, "  {} Checking man pages for '{}'... ✗ No entry \r\n", spinner_frames[spinner_idx], base_command);
+                                let _ = stderr.flush();
+                            }
                         }
                     }
+                } else {
+                    let _ = write!(stderr, "  {} Checking man pages for '{}'... ✗ No entry \r\n", spinner_frames[spinner_idx], base_command);
+                    let _ = stderr.flush();
                 }
             }
 
@@ -471,8 +502,11 @@ modifier = "ctrl"              # Modifier for navigation: "ctrl", "alt", or "non
 
     // Fallback if the command didn't have a `--help` or we couldn't parse it
     if completions.is_empty() {
-        completions.push(("--help".to_string(), "Show help menu".to_string(), 0));
-        completions.push(("--version".to_string(), "Show version info".to_string(), 0));
+        // No documentation found - provide helpful common flags
+        completions.push(("--help".to_string(), "Show help menu (most common)".to_string(), 100));
+        completions.push(("-h".to_string(), "Short form of --help".to_string(), 99));
+        completions.push(("--version".to_string(), "Show version information".to_string(), 98));
+        completions.push(("-v".to_string(), "Short form of --version".to_string(), 97));
     }
 
     // --- NEW: Fetch tldr for Extended Mode ---
