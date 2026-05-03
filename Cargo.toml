@@ -3,6 +3,10 @@ name = "ShiftTab"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "ShiftTab"
+path = "src/main.rs"
+
 [dependencies]
 anyhow = "1.0.102"
 crossterm = "0.29.0"

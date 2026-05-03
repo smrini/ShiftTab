@@ -14,17 +14,17 @@ optdepends=('man: for parsing command man pages'
 provides=("shifttab")
 conflicts=("shifttab-git")
 source=("${url}/archive/refs/tags/v${pkgver}.tar.gz")
-sha256sums=('5d80960e9739e51de4a37750e0675e4c5d0e86d34f2c9fa3b8379e9f05971ada')
+sha256sums=('c498248ec282085fb528ce19ea6f6c4a2bc2257a2c4a6da72ace73774126c777')
 
 build() {
-    cd "$srcdir/ShiftTab"
+    cd "$srcdir/ShiftTab-${pkgver}"
     
     # Use the optimized config in Cargo.toml
-    cargo build --release --locked
+    cargo build --release --locked --manifest-path ./Cargo.toml
 }
 
 package() {
-    cd "$srcdir/ShiftTab"
+    cd "$srcdir/ShiftTab-${pkgver}"
     
     # 1. Install the executable
     install -Dm755 "target/release/ShiftTab" "$pkgdir/usr/bin/ShiftTab"
